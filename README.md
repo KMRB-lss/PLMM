@@ -8,8 +8,10 @@
 ![Python](https://img.shields.io/badge/Python-3.8%2B-green.svg)
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D6.svg)
 ![Dependencies](https://img.shields.io/badge/dependencies-标准库%2B可选-lightgrey.svg)
+![CI](https://github.com/KMRB-lss/PLMM/actions/workflows/ci.yml/badge.svg)
+![Release](https://img.shields.io/github/v/release/KMRB-lss/PLMM?color=orange)
 
-无需安装 GUI 框架 · 单文件后端 · 浏览器即用
+无需安装 GUI 框架 · 单文件后端 · 浏览器即用 · 免安装 exe 可选
 
 </div>
 
@@ -33,13 +35,17 @@
 ## 🚀 快速开始
 
 ### 环境要求
-- **Windows 7+**（工具调用 Windows 原生功能）
-- **Python 3.8+**（[下载地址](https://www.python.org/downloads/)）
+
+**exe 方式**：仅需 **Windows 7+**，无需安装 Python。
+
+**源码方式**：需要 **Windows 7+** + **Python 3.8+**（[下载地址](https://www.python.org/downloads/)）
 
 ### 方式零（推荐）：免安装 exe
 
 从 [Releases 页面](https://github.com/KMRB-lss/PLMM/releases) 下载 `BatchFileRenamer_v1.0.0.exe`（约 19MB，不含本地 CLIP），双击即可运行，**启动后自动打开浏览器界面**。
 需要本地 CLIP 图片识别时，另下载 `model_pack.zip` 解压到 exe 同级目录 `resources/model_pack/` 即可。
+
+> 运行数据（命名方案、撤销记录、AI 配置等）会自动创建在 **exe 同目录** 的 `data/` 文件夹中，请保持 exe 所在文件夹可写。
 
 ### 安装依赖
 
@@ -91,13 +97,20 @@ python server.py 9000
 │   server.py               # Web 后端（HTTP 服务 + 全部业务逻辑，单文件）
 │   webui.html              # Web 前端界面（单文件，无构建步骤）
 │   启动Web版.bat           # Windows 一键启动脚本
-│   requirements.txt        # Python 依赖
+│   requirements.txt        # Python 核心依赖
+│   requirements-clip.txt   # 可选：本地 CLIP 识别依赖（torch 体积大）
 │   LICENSE                 # GPL-3.0 许可证
 │   LICENSING.md            # 第三方依赖许可证清单
+│   CONTRIBUTING.md         # 贡献指南
+│
+├── .github/                # GitHub 模板与 CI
+│   ├── workflows/ci.yml    # CI：语法 + 依赖检查
+│   ├── ISSUE_TEMPLATE/     # Issue 模板（Bug / 功能建议）
+│   └── PULL_REQUEST_TEMPLATE.md
 │
 ├── resources/
 │   ├── qr/                 # 打赏收款码
-│   └── model_pack/         # 本地 CLIP 模型包（可选，不入库）
+│   └── model_pack/         # 本地 CLIP 模型包（可选，不入库，Release 下载）
 │
 ├── docs/                   # 文档（如 Ollama 使用指南）
 └── data/                   # 运行时数据（自动生成，不入库）
@@ -135,6 +148,18 @@ python server.py 8890
 - 前端为单文件 `webui.html`，无构建步骤，改完刷新即生效
 - 提交规范见 [CONTRIBUTING.md](CONTRIBUTING.md)
 - 参与贡献请先阅读 [Issue 模板](.github/ISSUE_TEMPLATE/) 与 [PR 模板](.github/PULL_REQUEST_TEMPLATE.md)
+
+### 构建免安装 exe（可选）
+
+```bash
+# 建议在干净 venv 中打包（避免混入无关大依赖），仅需 openpyxl + Pillow
+pip install pyinstaller openpyxl Pillow
+
+pyinstaller --noconfirm --onefile --noconsole --name BatchFileRenamer \
+  --add-data "webui.html;." --add-data "resources/qr;qr" server.py
+```
+
+> 产物约 19MB（不含本地 CLIP）。若本机 site-packages 装有 torch 等大包，请先在干净 venv 中构建，否则 exe 会异常膨胀。
 
 ## 📄 许可证
 
