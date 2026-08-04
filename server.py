@@ -54,8 +54,17 @@ from urllib.parse import urlparse, unquote
 # ============================================================
 # 基础配置
 # ============================================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
+# PyInstaller 打包时，资源文件（webui.html、qr）位于 _MEIPASS 临时目录；
+# 运行数据（data/）则固定放在 exe 同目录，保证用户数据可持久化。
+if getattr(sys, "frozen", False):
+    APP_DIR = os.path.dirname(sys.executable)          # exe 所在目录（用户数据）
+    RES_DIR = getattr(sys, "_MEIPASS", APP_DIR)        # 打包资源目录
+else:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+    RES_DIR = APP_DIR
+
+BASE_DIR = RES_DIR
+DATA_DIR = os.path.join(APP_DIR, "data")
 UNDO_DIR = os.path.join(DATA_DIR, "_undo_logs")
 TEMPLATE_DIR = os.path.join(DATA_DIR, "templates")
 SCHEME_DIR = os.path.join(DATA_DIR, "schemes")

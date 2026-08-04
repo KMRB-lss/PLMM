@@ -36,6 +36,11 @@
 - **Windows 7+**（工具调用 Windows 原生功能）
 - **Python 3.8+**（[下载地址](https://www.python.org/downloads/)）
 
+### 方式零（推荐）：免安装 exe
+
+从 [Releases 页面](https://github.com/KMRB-lss/PLMM/releases) 下载 `批量文件重命名工具.exe`（约 19MB，不含本地 CLIP），双击即可运行，**启动后自动打开浏览器界面**。
+需要本地 CLIP 图片识别时，另下载 `model_pack.zip` 解压到 exe 同级目录 `resources/model_pack/` 即可。
+
 ### 安装依赖
 
 ```bash
