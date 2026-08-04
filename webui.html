@@ -1,0 +1,2405 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>批量文件重命名工具 · Web 控制台</title>
+<!--
+  批量文件重命名工具 · Web 前端（单文件界面）
+
+  Copyright (C) 2026 批量文件重命名工具 作者
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+-->
+<style>
+/* ============================================================
+   「精密控制台」批量文件重命名工具 · Web UI 原型
+   深炭黑基底 + 薄荷绿强调 · 网格纹理 · 玻璃拟态 · 微交互
+   ============================================================ */
+:root{
+  /* 背景层级 */
+  --bg:#0d1115;
+  --bg-deep:#090c10;
+  --surface:#141a21;
+  --surface-2:#1a222c;
+  --surface-3:#223040;
+  --input:#0b0f14;
+  /* 文本层级 */
+  --text:#e8edf3;
+  --text-2:#9aa8b8;
+  --text-3:#5c6a79;
+  /* 强调：薄荷绿 */
+  --accent:#2dd4bf;
+  --accent-2:#5eead4;
+  --accent-dim:#14b8a6;
+  --on-accent:#04211c;
+  /* 状态 */
+  --ok:#34d399;
+  --warn:#f5b544;
+  --err:#f56c6c;
+  --info:#7dd3fc;
+  /* 边框与阴影 */
+  --border:#232e3a;
+  --border-2:#2e3b49;
+  --ring:rgba(45,212,191,.45);
+  --shadow-1:0 1px 2px rgba(0,0,0,.4),0 4px 12px rgba(0,0,0,.25);
+  --shadow-2:0 8px 30px rgba(0,0,0,.45);
+  /* 圆角 */
+  --r-sm:6px; --r-md:10px; --r-lg:14px; --r-pill:999px;
+  /* 字体 */
+  --font-ui:"Segoe UI Variable","PingFang SC","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"Cascadia Code","JetBrains Mono",Consolas,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  font-family:var(--font-ui);
+  background:var(--bg);
+  color:var(--text);
+  font-size:14px;
+  line-height:1.5;
+  overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+/* ---------- 氛围层：网格 + 光晕 + 噪点 ---------- */
+.ambient{position:fixed;inset:0;pointer-events:none;z-index:0}
+.ambient::before{ /* 顶部薄荷光晕 */
+  content:"";position:absolute;top:-240px;left:50%;transform:translateX(-50%);
+  width:900px;height:480px;border-radius:50%;
+  background:radial-gradient(closest-side,rgba(45,212,191,.14),transparent 70%);
+}
+.ambient::after{ /* 网格纹理 */
+  content:"";position:absolute;inset:0;opacity:.5;
+  background-image:linear-gradient(rgba(120,150,170,.05) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(120,150,170,.05) 1px,transparent 1px);
+  background-size:44px 44px;
+  mask-image:linear-gradient(180deg,rgba(0,0,0,.9),rgba(0,0,0,.35) 55%,transparent);
+}
+.noise{position:fixed;inset:0;pointer-events:none;z-index:1;opacity:.035;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+}
+/* ---------- 布局骨架 ---------- */
+.app{position:relative;z-index:2;height:100vh;display:grid;grid-template-rows:auto 1fr;gap:0;overflow:hidden}
+.shell{display:grid;grid-template-columns:292px 1fr;gap:14px;padding:0 16px 12px;min-height:0;min-width:0}
+.right-col{display:flex;flex-direction:column;min-height:0;min-width:0}
+.main-col{display:grid;grid-template-rows:auto 1fr;min-height:0;min-width:0;flex:1 1 auto}
+/* 可拖拽分割条：调整底部预览区高度 */
+.resize-handle{
+  flex:none;height:12px;cursor:ns-resize;display:flex;align-items:center;justify-content:center;
+  position:relative;z-index:4;
+}
+.resize-handle::before{
+  content:"";width:56px;height:3px;border-radius:var(--r-pill);background:var(--border-2);
+  transition:background .15s,width .15s;
+}
+.resize-handle:hover::before,.resize-handle.dragging::before{background:var(--accent);width:84px}
+.preview{min-height:0}
+
+/* ---------- 顶栏 ---------- */
+.app-bar{
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:12px 18px;background:rgba(13,17,21,.82);
+  border-bottom:1px solid var(--border);backdrop-filter:blur(14px);
+  position:relative;z-index:5;
+}
+.brand{display:flex;align-items:center;gap:12px;min-width:0}
+.brand-logo{
+  width:38px;height:38px;border-radius:10px;flex:none;
+  background:linear-gradient(145deg,var(--accent),var(--accent-dim));
+  display:grid;place-items:center;color:var(--on-accent);
+  font-weight:800;font-size:19px;box-shadow:0 0 0 1px rgba(45,212,191,.35),0 6px 18px rgba(20,184,166,.28);
+}
+.brand h1{font-size:16px;font-weight:700;letter-spacing:.2px;white-space:nowrap}
+.brand .sub{font-size:12px;color:var(--text-3);margin-top:1px;white-space:nowrap}
+.app-actions{display:flex;align-items:center;gap:8px;flex:none}
+.mode-badge{
+  display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:var(--r-pill);
+  background:rgba(45,212,191,.1);border:1px solid rgba(45,212,191,.3);color:var(--accent-2);
+  font-size:12px;white-space:nowrap;
+}
+.mode-badge::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok);
+  box-shadow:0 0 0 0 rgba(52,211,153,.6);animation:pulse 2.2s infinite}
+@keyframes pulse{70%{box-shadow:0 0 0 7px rgba(52,211,153,0)}100%{box-shadow:0 0 0 0 rgba(52,211,153,0)}}
+
+/* ---------- 通用控件 ---------- */
+.btn{
+  display:inline-flex;align-items:center;gap:6px;justify-content:center;
+  padding:7px 14px;border-radius:var(--r-sm);border:1px solid var(--border);
+  background:var(--surface-2);color:var(--text);font-family:inherit;font-size:13px;
+  cursor:pointer;transition:background .16s,border-color .16s,transform .08s,box-shadow .16s;
+  white-space:nowrap;user-select:none;
+}
+.btn:hover{background:var(--surface-3);border-color:var(--border-2)}
+.btn:active{transform:translateY(1px)}
+.btn:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--text-2)}
+.btn.ghost:hover{background:var(--surface-2);color:var(--text)}
+.btn.primary{
+  background:linear-gradient(145deg,var(--accent),var(--accent-dim));border-color:transparent;
+  color:var(--on-accent);font-weight:600;box-shadow:0 3px 14px rgba(20,184,166,.3);
+}
+.btn.primary:hover{background:linear-gradient(145deg,var(--accent-2),var(--accent));box-shadow:0 5px 18px rgba(20,184,166,.4)}
+.btn.danger-ghost{background:transparent;border-color:transparent;color:var(--err)}
+.btn.danger-ghost:hover{background:rgba(245,108,108,.1);border-color:rgba(245,108,108,.3)}
+.btn.sm{padding:4px 10px;font-size:12px}
+.btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
+.chip{
+  display:inline-flex;align-items:center;gap:4px;padding:3px 11px;border-radius:var(--r-pill);
+  background:var(--surface-3);color:var(--text-2);font-size:12px;cursor:pointer;
+  border:1px solid transparent;transition:all .16s;user-select:none;
+}
+.chip:hover{color:var(--accent-2);background:rgba(45,212,191,.12);border-color:rgba(45,212,191,.3)}
+.chip.active{background:rgba(45,212,191,.14);color:var(--accent-2);border-color:rgba(45,212,191,.4)}
+.input,.select{
+  background:var(--input);border:1px solid var(--border);border-radius:var(--r-sm);
+  color:var(--text);font-family:inherit;font-size:13px;padding:7px 10px;
+  transition:border-color .16s,box-shadow .16s;min-width:0;
+}
+.input::placeholder{color:var(--text-3)}
+.input:focus,.select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--ring)}
+.select{appearance:none;-webkit-appearance:none;padding-right:28px;cursor:pointer;
+  background-image:linear-gradient(45deg,transparent 50%,var(--text-3) 50%),linear-gradient(135deg,var(--text-3) 50%,transparent 50%);
+  background-position:calc(100% - 17px) 55%,calc(100% - 12px) 55%;background-size:5px 5px;background-repeat:no-repeat}
+.select:hover{border-color:var(--border-2)}
+.select option{background:var(--surface-2);color:var(--text)}
+.check{display:inline-flex;align-items:center;gap:7px;cursor:pointer;user-select:none;font-size:13px;color:var(--text-2)}
+.check input{appearance:none;width:15px;height:15px;border-radius:4px;border:1.5px solid var(--border-2);
+  background:var(--input);cursor:pointer;position:relative;transition:all .15s;flex:none}
+.check input:checked{background:var(--accent);border-color:var(--accent)}
+.check input:checked::after{content:"";position:absolute;left:4px;top:1px;width:4px;height:8px;
+  border:solid var(--on-accent);border-width:0 2px 2px 0;transform:rotate(45deg)}
+.check input:focus-visible{outline:2px solid var(--ring)}
+.check:hover input:not(:checked){border-color:var(--accent-dim)}
+.field-label{display:block;font-size:12px;color:var(--text-3);margin-bottom:5px;font-weight:500}
+.row{display:flex;align-items:center;gap:8px}
+
+/* ---------- 卡片 ---------- */
+.card{
+  background:linear-gradient(180deg,rgba(26,34,44,.9),rgba(20,26,33,.92));
+  border:1px solid var(--border);border-radius:var(--r-lg);
+  box-shadow:var(--shadow-1);position:relative;
+}
+.card::before{ /* 顶部高光描边 */
+  content:"";position:absolute;top:0;left:16px;right:16px;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.08),transparent);
+}
+.card-title{display:flex;align-items:center;gap:8px;padding:12px 16px 10px;font-size:13px;font-weight:700;
+  color:var(--accent-2);letter-spacing:.3px}
+.card-title .ic{font-size:15px}
+.card-body{padding:4px 16px 14px}
+
+/* ---------- 侧栏：文件夹 ---------- */
+.sidebar{display:flex;flex-direction:column;gap:12px;min-height:0;padding:4px 0 10px}
+.sidebar .card{display:flex;flex-direction:column;min-height:0}
+.folder-actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;padding:0 16px 8px}
+.folder-options{display:flex;gap:14px;padding:0 16px 10px;border-bottom:1px dashed var(--border)}
+.folder-list{flex:1;min-height:0;overflow:auto;padding:8px;display:flex;flex-direction:column;gap:4px}
+.folder-item{
+  display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:var(--r-sm);
+  background:var(--surface-2);border:1px solid var(--border);cursor:pointer;transition:all .14s;
+}
+.folder-item:hover{border-color:var(--border-2);background:var(--surface-3)}
+.folder-item.active{border-color:rgba(45,212,191,.45);background:rgba(45,212,191,.08)}
+.folder-item .f-ic{flex:none;font-size:15px}
+.folder-item .f-name{flex:1;min-width:0;font-size:12.5px;color:var(--text);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.folder-item .f-count{font-family:var(--font-mono);font-size:11px;color:var(--text-3)}
+.folder-foot{padding:10px 16px 12px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:8px}
+.folder-foot .btn{flex:1 1 calc(50% - 4px);min-width:0}
+.folder-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+  color:var(--text-3);font-size:12px;height:100%;min-height:90px}
+.folder-empty .big{font-size:30px;opacity:.5}
+
+/* ---------- 标签页 ---------- */
+.tabs{display:flex;gap:4px;padding:2px 2px 0;overflow-x:auto;scrollbar-width:none;flex:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{
+  display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border-radius:var(--r-md) var(--r-md) 0 0;
+  color:var(--text-3);font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;
+  border:1px solid transparent;border-bottom:none;transition:all .18s;user-select:none;position:relative;
+}
+.tab:hover{color:var(--text-2);background:rgba(255,255,255,.03)}
+.tab.active{
+  color:var(--on-accent);background:linear-gradient(145deg,var(--accent),var(--accent-dim));
+  font-weight:600;box-shadow:0 4px 16px rgba(20,184,166,.3);
+}
+.tab-panel{display:none;padding:14px;overflow:auto;min-height:0;height:100%}
+.tab-panel.active{display:block;animation:tabIn .28s ease}
+@keyframes tabIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* 操作流程步骤条 */
+.steps{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.step{
+  display:inline-flex;align-items:center;gap:7px;padding:6px 13px;border-radius:var(--r-pill);
+  background:var(--surface-2);border:1px solid var(--border);font-size:12.5px;color:var(--text-2);
+  animation:rise .4s both;
+}
+.step b{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;font-size:10.5px;
+  background:rgba(45,212,191,.15);color:var(--accent-2);font-family:var(--font-mono)}
+.step-sep{color:var(--text-3);font-size:13px;animation:rise .4s .06s both}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+/* 命名规则 */
+.rules-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.rule-item{display:flex;flex-direction:column;gap:5px}
+.rule-preview{
+  margin-top:14px;padding:12px 14px;border-radius:var(--r-md);
+  background:var(--input);border:1px dashed var(--border-2);
+  font-family:var(--font-mono);font-size:13px;color:var(--text-2);
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-height:44px;
+}
+.rule-preview .arrow{color:var(--accent);font-weight:700}
+.rule-preview .sample{color:var(--accent-2)}
+.meta-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.section-gap{height:14px}
+
+/* 添加/替换 */
+.dual{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:720px){.dual{grid-template-columns:1fr}}
+
+/* 正则页 */
+.regex-presets{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+.regex-live{
+  display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:var(--r-md);
+  background:var(--input);border:1px solid var(--border);margin-top:12px;flex-wrap:wrap;
+}
+.regex-live .old{color:var(--text-3);text-decoration:line-through}
+.regex-live .new{color:var(--accent-2);font-family:var(--font-mono)}
+
+/* 模板页 */
+.tpl-row{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.tpl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.tpl-card{
+  padding:13px 14px;border-radius:var(--r-md);background:var(--surface-2);
+  border:1px solid var(--border);transition:all .16s;cursor:pointer;
+}
+.tpl-card:hover{border-color:rgba(45,212,191,.4);transform:translateY(-2px);box-shadow:var(--shadow-1)}
+.tpl-card .t-name{font-weight:600;font-size:13px;margin-bottom:4px;display:flex;justify-content:space-between}
+.tpl-card .t-desc{font-size:11.5px;color:var(--text-3);font-family:var(--font-mono)}
+
+/* 图片识别 */
+.ai-mode{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-top:14px}
+.stat-cell{text-align:center;padding:12px 8px;border-radius:var(--r-md);background:var(--surface-2);border:1px solid var(--border)}
+.stat-cell .num{font-size:22px;font-weight:800;font-family:var(--font-mono)}
+.stat-cell .lbl{font-size:11.5px;color:var(--text-3);margin-top:2px}
+
+/* 进度条 */
+.progress{height:6px;border-radius:var(--r-pill);background:var(--input);border:1px solid var(--border);
+  overflow:hidden;position:relative}
+.progress .bar{height:100%;width:0%;border-radius:var(--r-pill);
+  background:linear-gradient(90deg,var(--accent-dim),var(--accent-2));transition:width .3s ease;
+  position:relative}
+.progress .bar::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);
+  animation:shine 1.6s linear infinite}
+@keyframes shine{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+
+/* ---------- 底部预览 ---------- */
+.preview{
+  flex:0 0 260px;min-height:140px;max-height:78vh;overflow:hidden;
+  display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r-lg) var(--r-lg) 0 0;box-shadow:var(--shadow-2);
+}
+.preview-toolbar{display:flex;gap:8px;align-items:center;padding:10px 14px;flex-wrap:wrap;border-bottom:1px solid var(--border)}
+.preview-toolbar .spacer{flex:1}
+.count-badge{font-size:12px;color:var(--text-2);font-family:var(--font-mono)}
+.count-badge b{color:var(--accent-2)}
+.preview-table{flex:1;min-height:0;overflow:auto;position:relative}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+thead th{
+  position:sticky;top:0;z-index:3;text-align:left;padding:9px 12px;
+  background:var(--bg-deep);color:var(--text-3);font-weight:600;font-size:11.5px;
+  border-bottom:1px solid var(--border);letter-spacing:.4px;white-space:nowrap;cursor:pointer;
+}
+thead th:hover{color:var(--text-2)}
+tbody tr{border-bottom:1px solid rgba(35,46,58,.55);transition:background .12s;animation:fadeRow .3s both}
+tbody tr:nth-child(even){background:rgba(255,255,255,.014)}
+tbody tr:hover{background:rgba(45,212,191,.05)}
+tbody tr.row-ok td[data-col="status"]{color:var(--ok)}
+tbody tr.row-err td[data-col="status"]{color:var(--err)}
+tbody tr.row-warn td[data-col="status"]{color:var(--warn)}
+@keyframes fadeRow{from{opacity:0}to{opacity:1}}
+td{padding:8px 12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
+td .old{color:var(--text-3)}
+td .new{color:var(--accent-2);font-family:var(--font-mono)}
+td .diff{color:var(--warn)}
+.status-pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:2px 9px;border-radius:var(--r-pill)}
+.status-pill::before{content:"";width:6px;height:6px;border-radius:50%}
+.sp-pending{color:var(--text-3);background:rgba(255,255,255,.05)}
+.sp-pending::before{background:var(--text-3)}
+.sp-ok{color:var(--ok);background:rgba(52,211,153,.12)}
+.sp-ok::before{background:var(--ok)}
+.sp-err{color:var(--err);background:rgba(245,108,108,.12)}
+.sp-err::before{background:var(--err)}
+.sp-warn{color:var(--warn);background:rgba(245,181,68,.12)}
+.sp-warn::before{background:var(--warn)}
+.cat-tag{display:inline-flex;font-size:10.5px;padding:1px 8px;border-radius:var(--r-pill);
+  background:rgba(125,211,252,.12);color:var(--info)}
+.preview-actions{display:flex;gap:8px;align-items:center;padding:10px 14px;border-top:1px solid var(--border);flex-wrap:wrap}
+.preview-actions .progress{flex:1;min-width:160px}
+.preview-actions .stat-line{font-size:12px;color:var(--text-3);font-family:var(--font-mono)}
+
+/* 滚动条 */
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:var(--r-pill);border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb:hover{background:var(--text-3)}
+
+/* ---------- 模态框 ---------- */
+.modal-overlay{
+  position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;
+  background:rgba(8,11,14,.66);backdrop-filter:blur(6px);
+  opacity:0;pointer-events:none;transition:opacity .22s ease;
+}
+.modal-overlay.open{opacity:1;pointer-events:auto}
+.modal{
+  width:min(680px,calc(100vw - 48px));max-height:84vh;display:flex;flex-direction:column;
+  background:var(--surface);border:1px solid var(--border-2);border-radius:var(--r-lg);
+  box-shadow:var(--shadow-2);overflow:hidden;transform:translateY(14px) scale(.98);
+  transition:transform .22s ease;
+}
+.modal-overlay.open .modal{transform:translateY(0) scale(1)}
+.modal-head{
+  display:flex;align-items:center;gap:10px;padding:14px 18px;flex:none;
+  border-bottom:1px solid var(--border);background:var(--bg-deep);
+}
+.modal-head .m-title{font-size:15px;font-weight:700;color:var(--text)}
+.modal-head .m-sub{font-size:11.5px;color:var(--text-3);margin-left:auto}
+.modal-head .m-close{
+  margin-left:auto;width:28px;height:28px;border-radius:8px;display:grid;place-items:center;
+  background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);
+  cursor:pointer;font-size:14px;transition:all .15s;
+}
+.modal-head .m-close:hover{background:rgba(245,108,108,.12);color:var(--err);border-color:rgba(245,108,108,.3)}
+.modal-body{padding:18px;overflow-y:auto;min-height:0}
+.modal-foot{
+  display:flex;gap:8px;justify-content:flex-end;padding:12px 18px;flex:none;
+  border-top:1px solid var(--border);background:var(--bg-deep);
+}
+
+/* 打赏 */
+.donate-grid{display:flex;gap:20px;justify-content:center;flex-wrap:wrap}
+.donate-card{
+  width:230px;text-align:center;padding:16px;border:1px solid var(--border);border-radius:var(--r-lg);
+  background:var(--surface-2);
+}
+.donate-card img{width:190px;height:190px;object-fit:contain;border-radius:10px;background:#fff;padding:6px}
+.donate-card .d-label{margin-top:10px;font-size:13.5px;font-weight:600;color:var(--text)}
+
+/* 日志 */
+.log-list{display:flex;flex-direction:column;gap:4px;font-family:var(--font-mono);font-size:12px}
+.log-item{display:flex;gap:10px;align-items:baseline;padding:5px 9px;border-radius:7px;background:var(--surface-2)}
+.log-item .lt{color:var(--text-3);flex:none;white-space:nowrap}
+.log-item .lv{flex:none;min-width:52px;text-align:center;border-radius:5px;padding:1px 5px;font-size:10.5px;font-weight:600}
+.lv-info{color:var(--info);background:rgba(125,211,252,.1)}
+.lv-success{color:var(--ok);background:rgba(52,211,153,.12)}
+.lv-warning{color:var(--warn);background:rgba(245,181,68,.12)}
+.lv-error{color:var(--err);background:rgba(245,108,108,.12)}
+.log-item .lm{color:var(--text-2);word-break:break-all}
+.log-empty{text-align:center;color:var(--text-3);padding:30px 0;font-size:13px}
+
+/* 使用说明 */
+.help-sec{margin-bottom:18px}
+.help-sec h4{
+  display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700;color:var(--accent-2);
+  margin:0 0 8px;padding-bottom:6px;border-bottom:1px solid var(--border);
+}
+.help-sec ol,.help-sec ul{margin:0 0 6px;padding-left:20px;color:var(--text-2);font-size:13px;line-height:1.9}
+.help-sec li b{color:var(--text)}
+.help-steps{display:flex;flex-direction:column;gap:8px;margin-bottom:6px}
+.help-step{display:flex;gap:10px;align-items:flex-start}
+.help-step .hs-n{
+  flex:none;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;
+  background:linear-gradient(145deg,var(--accent),var(--accent-dim));color:var(--on-accent);
+  font-size:12px;font-weight:700;margin-top:1px;
+}
+.help-step .hs-t{color:var(--text-2);font-size:13px;line-height:1.8}
+.help-step .hs-t b{color:var(--text)}
+.kbd{
+  display:inline-block;padding:1px 7px;border-radius:5px;border:1px solid var(--border-2);
+  border-bottom-width:2px;background:var(--surface-2);color:var(--text);font-family:var(--font-mono);
+  font-size:11.5px;
+}
+.warn-box{
+  border:1px solid rgba(245,181,68,.35);background:rgba(245,181,68,.07);border-radius:var(--r-md);
+  padding:10px 14px;font-size:12.5px;color:var(--warn);line-height:1.8;
+}
+.guide-table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:4px}
+.guide-table th{
+  background:var(--bg-deep);color:var(--text-3);text-align:left;padding:7px 10px;
+  border-bottom:1px solid var(--border);font-weight:600;font-size:11px;
+}
+.guide-table td{padding:7px 10px;border-bottom:1px solid var(--border);color:var(--text-2)}
+.guide-table td:first-child{color:var(--text);white-space:nowrap}
+.guide-table tr:hover td{background:var(--surface-2)}
+.card-sub{
+  border:1px solid var(--border);border-radius:var(--r-md);padding:10px 12px;
+  background:var(--surface-2);
+}
+
+/* 右键菜单 */
+.ctx-menu{
+  position:fixed;z-index:60;min-width:168px;padding:5px;border-radius:10px;
+  background:var(--surface);border:1px solid var(--border-2);box-shadow:var(--shadow-2);
+  display:none;font-size:12.5px;
+}
+.ctx-menu.show{display:block}
+.ctx-menu .cm-item{padding:7px 10px;border-radius:7px;color:var(--text-2);cursor:pointer;display:flex;gap:8px;align-items:center}
+.ctx-menu .cm-item:hover{background:var(--surface-2);color:var(--text)}
+.ctx-menu .cm-sep{height:1px;background:var(--border);margin:5px 6px}
+
+/* ---------- 响应式断点 ---------- */
+@media (max-width:1180px){
+  .shell{grid-template-columns:1fr}
+  .sidebar{display:none}
+}
+@media (max-width:760px){
+  .app-bar{flex-wrap:wrap}
+  .brand .sub{display:none}
+  .tabs .tab{padding:8px 12px;font-size:12px}
+  .preview-toolbar .search{width:100%}
+  .rules-grid{grid-template-columns:1fr 1fr}
+}
+@media (max-width:520px){
+  .rules-grid{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div class="ambient"></div>
+<div class="noise"></div>
+
+<div class="app">
+  <!-- ================= 顶栏 ================= -->
+  <header class="app-bar">
+    <div class="brand">
+      <div class="brand-logo">✱</div>
+      <div>
+        <h1>批量文件重命名工具</h1>
+        <div class="sub">Batch Renamer · 精密文件整理控制台</div>
+      </div>
+    </div>
+    <div class="app-actions">
+      <span class="mode-badge">本地引擎就绪</span>
+      <button class="btn ghost" onclick="openModal('helpModal')">📖 使用说明</button>
+      <button class="btn ghost" onclick="openModal('logModal')">📋 操作日志</button>
+      <button class="btn ghost" onclick="openModal('donateModal')">💖 打赏作者</button>
+    </div>
+  </header>
+
+  <!-- ================= 主体 ================= -->
+  <div class="shell">
+    <!-- 左侧：文件夹 -->
+    <aside class="sidebar">
+      <div class="card" style="flex:1;display:flex;flex-direction:column">
+        <div class="card-title"><span class="ic">📁</span>选择文件夹</div>
+        <div class="folder-actions">
+          <button class="btn sm" onclick="pickFolder()">📂 浏览</button>
+          <button class="btn sm" onclick="removeFolder()">✕ 删除</button>
+          <button class="btn sm" onclick="clearFolders()">🗑 清空</button>
+        </div>
+        <div class="row" style="padding:0 16px 8px">
+          <input class="input" style="flex:1" id="manualPath" placeholder="或手动输入路径…" onkeydown="if(event.key==='Enter')addManualFolder()">
+          <button class="btn sm" onclick="addManualFolder()">＋</button>
+        </div>
+        <div class="folder-options">
+          <label class="check"><input type="checkbox" id="optRecursive" checked> 递归子目录</label>
+          <label class="check"><input type="checkbox" id="optOnlyFolder"> 仅文件夹</label>
+        </div>
+        <div class="folder-list" id="folderList"></div>
+        <div class="folder-foot">
+          <button class="btn primary" onclick="loadFiles()">⟳ 加载文件列表</button>
+          <button class="btn" onclick="refreshFolders()">⟲ 刷新</button>
+          <button class="btn" onclick="document.getElementById('excelFile').click()">📊 从 Excel 导入</button>
+          <input type="file" id="excelFile" accept=".xlsx,.xls,.csv" style="display:none" onchange="importExcelFile(this)">
+        </div>
+      </div>
+    </aside>
+
+    <!-- 右侧列：标签页 + 可拖拽预览区 -->
+    <div class="right-col">
+    <!-- 中央：标签页 -->
+    <div class="main-col">
+      <nav class="tabs" id="tabs">
+        <button class="tab active" data-tab="basic">📁 基本功能</button>
+        <button class="tab" data-tab="regex">🔀 正则替换</button>
+        <button class="tab" data-tab="template">🗂 模板管理</button>
+        <button class="tab" data-tab="clip">🖼 图片识别</button>
+        <button class="tab" data-tab="ai">🤖 AI 内容命名</button>
+      </nav>
+
+      <!-- 基本功能 -->
+      <section class="tab-panel active" id="panel-basic">
+        <div class="steps">
+          <span class="step" style="animation-delay:.0s"><b>1</b>选择文件夹</span>
+          <span class="step-sep">→</span>
+          <span class="step" style="animation-delay:.06s"><b>2</b>加载文件列表</span>
+          <span class="step-sep">→</span>
+          <span class="step" style="animation-delay:.12s"><b>3</b>生成预览</span>
+          <span class="step-sep">→</span>
+          <span class="step" style="animation-delay:.18s"><b>4</b>开始重命名</span>
+        </div>
+
+        <div class="card">
+          <div class="card-title"><span class="ic">✏️</span>命名规则设置</div>
+          <div class="card-body">
+            <div class="row" style="margin-bottom:14px;flex-wrap:wrap;gap:8px">
+              <span class="field-label" style="margin:0">方案：</span>
+              <select class="select" style="width:150px" id="selScheme" onchange="onSchemeSelect()"></select>
+              <input class="input" style="width:110px" id="schemeName" placeholder="方案名" onkeydown="if(event.key==='Enter')saveCurrentScheme()">
+              <button class="btn sm" onclick="saveCurrentScheme()">💾 保存方案</button>
+              <button class="btn sm" onclick="deleteCurrentScheme()">✕ 删除方案</button>
+              <button class="btn sm" onclick="applySchemeToChecked()">▼ 应用到勾选</button>
+              <button class="btn sm" onclick="setAllScheme()">全部设为该方案</button>
+              <span style="flex:1"></span>
+              <label class="check"><input type="checkbox" id="useCategory" onchange="livePreview()"> 按分类命名</label>
+              <label class="check"><input type="checkbox" id="groupByExt" onchange="livePreview()"> 按扩展名编号</label>
+            </div>
+            <div class="rules-grid">
+              <div class="rule-item">
+                <label class="field-label">前缀</label>
+                <input class="input" id="inPrefix" value="旅行照片" oninput="livePreview()">
+              </div>
+              <div class="rule-item">
+                <label class="field-label">起始编号</label>
+                <input class="input" id="inStart" type="number" value="1" min="0" oninput="livePreview()">
+              </div>
+              <div class="rule-item">
+                <label class="field-label">编号位数</label>
+                <select class="select" id="inPad" onchange="livePreview()">
+                  <option value="2" selected>2 位</option><option value="3">3 位</option>
+                  <option value="4">4 位</option><option value="5">5 位</option>
+                </select>
+              </div>
+              <div class="rule-item">
+                <label class="field-label">后缀</label>
+                <input class="input" id="inSuffix" value="" placeholder="可选" oninput="livePreview()">
+              </div>
+              <div class="rule-item">
+                <label class="field-label">命名模式</label>
+                <select class="select" id="inMode" onchange="livePreview()">
+                  <option value="pn" selected>前缀 + 编号（推荐）</option>
+                  <option value="np">编号 + 前缀</option>
+                  <option value="pns">前缀 + 编号 + 后缀</option>
+                </select>
+              </div>
+            </div>
+            <div class="rule-item" style="margin-top:12px">
+              <label class="field-label">元数据占位符 <span style="color:var(--text-3)">（点击插入到前缀）</span></label>
+              <div class="meta-chips">
+                <span class="chip" data-meta="创建日期" onclick="insertMetaChip('{创建日期}')">📅 创建日期</span>
+                <span class="chip" data-meta="修改日期" onclick="insertMetaChip('{修改日期}')">🕒 修改日期</span>
+                <span class="chip" data-meta="文件大小" onclick="insertMetaChip('{文件大小}')">📦 文件大小</span>
+                <span class="chip" data-meta="扩展名" onclick="insertMetaChip('{文件扩展名}')">🧩 扩展名</span>
+                <span class="chip" data-meta="作者" onclick="insertMetaChip('{作者}')">👤 作者</span>
+                <span class="chip" data-meta="所有者" onclick="insertMetaChip('{所有者}')">🔐 所有者</span>
+                <span class="chip" data-meta="原文件名" onclick="insertMetaChip('{原文件名}')">📄 原文件名</span>
+                <span class="chip" data-meta="ID编号" onclick="insertMetaChip('{ID:3}')">🔢 ID编号</span>
+              </div>
+            </div>
+            <div class="rule-preview" id="rulePreview"></div>
+          </div>
+        </div>
+
+        <div class="section-gap"></div>
+        <div class="card">
+          <div class="card-title"><span class="ic">🔧</span>添加 &amp; 替换 <span style="font-weight:400;color:var(--text-3);font-size:12px">— 与命名规则相互独立，可组合使用</span></div>
+          <div class="card-body">
+            <div class="dual">
+              <div>
+                <div class="row" style="margin-bottom:10px">
+                  <span class="field-label" style="margin:0">添加内容：</span>
+                  <input class="input" style="flex:1" id="addText" placeholder="在文件名前/后插入文字" oninput="livePreview()">
+                  <label class="check"><input type="radio" name="addPos" value="前" checked> 前面</label>
+                  <label class="check"><input type="radio" name="addPos" value="后"> 后面</label>
+                </div>
+              </div>
+              <div class="row">
+                <span class="field-label" style="margin:0">查找：</span>
+                <input class="input" style="flex:1" id="findText" placeholder="要查找的内容" oninput="livePreview()">
+                <span class="field-label" style="margin:0">替换为：</span>
+                <input class="input" style="flex:1" id="replaceText" placeholder="留空即删除" oninput="livePreview()">
+                <button class="btn sm" onclick="livePreview()">替换</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 正则替换 -->
+      <section class="tab-panel" id="panel-regex">
+        <div class="card">
+          <div class="card-title"><span class="ic">🔍</span>正则替换</div>
+          <div class="card-body">
+            <div class="row" style="margin-bottom:8px">
+              <span class="field-label" style="margin:0">场景模板：</span>
+              <select class="select" style="width:260px" onchange="applyRegexPreset(this.value)">
+                <option value="">— 选择预设 —</option>
+                <option value="digits">去数字后缀 \d+ → ""</option>
+                <option value="spaces">空格转下划线 → "_"</option>
+                <option value="extract">提取括号内容 (.*?)</option>
+                <option value="leading">去前导零 ^0+ → ""</option>
+              </select>
+            </div>
+            <div class="regex-presets">
+              <span class="chip active">去数字</span>
+              <span class="chip">空格→下划线</span>
+              <span class="chip">提取括号</span>
+              <span class="chip">去前导零</span>
+            </div>
+            <div class="row" style="margin-bottom:10px">
+              <span class="field-label" style="margin:0;width:64px">查找内容：</span>
+              <input class="input" style="flex:1" id="regexFind" placeholder="如 \d+（留空表示不启用正则替换）" oninput="regexLive()">
+            </div>
+            <div class="row">
+              <span class="field-label" style="margin:0;width:64px">替换为：</span>
+              <input class="input" style="flex:1" id="regexReplace" placeholder="留空即删除" oninput="regexLive()">
+              <label class="check"><input type="checkbox" id="regexCase" checked> 区分大小写</label>
+              <label class="check"><input type="checkbox" id="regexLower"> 全部小写</label>
+            </div>
+            <div class="regex-live">
+              <span>实时预览</span>
+              <span class="old">IMG_0012.jpg</span>
+              <span class="new" id="regexResult">→ 未启用正则（输入查找内容后生效）</span>
+            </div>
+            <div class="row" style="margin-top:10px">
+              <button class="btn sm" onclick="openModal('regexRefModal')">📚 展开正则参考</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 模板管理 -->
+      <section class="tab-panel" id="panel-template">
+        <div class="card">
+          <div class="card-title"><span class="ic">💾</span>模板管理</div>
+          <div class="card-body">
+            <div class="tpl-row">
+              <span class="field-label" style="margin:0;align-self:center">保存当前设置为模板：</span>
+              <input class="input" style="width:240px" id="tplName" placeholder="模板名称">
+              <button class="btn primary sm" onclick="saveTemplate()">保存模板</button>
+              <button class="btn sm" onclick="loadTemplates()">⟲ 刷新</button>
+            </div>
+            <div class="tpl-grid" id="tplGrid"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 图片识别 -->
+      <section class="tab-panel" id="panel-clip">
+        <div class="card">
+          <div class="card-title"><span class="ic">🖼️</span>图片内容识别</div>
+          <div class="card-body">
+            <div class="row" style="margin-bottom:8px">
+              <span class="field-label" style="margin:0">识别方式：</span>
+              <div class="ai-mode" id="recModeGroup">
+                <span class="chip" data-rec="rule">⚙️ 规则分类</span>
+                <span class="chip" data-rec="clip">🖥 本地 CLIP</span>
+                <span class="chip" data-rec="ollama">🦙 Ollama 多模态</span>
+                <span class="chip" data-rec="api">☁️ 云端 AI API</span>
+              </div>
+            </div>
+
+            <!-- 规则分类说明 -->
+            <div class="regex-live" id="recRuleNote" style="margin-top:8px">
+              <span>📋 规则模式按文件扩展名自动分类（无需联网，即刻可用）</span>
+            </div>
+
+            <!-- 云端 API 配置 -->
+            <div id="recApiCfg" style="display:none">
+              <div class="rules-grid" style="margin-top:10px">
+                <div class="rule-item"><label class="field-label">服务商</label>
+                  <select class="select" id="apiProvider" onchange="onProviderChange()"></select></div>
+                <div class="rule-item"><label class="field-label">API Key</label>
+                  <input class="input" id="apiKey" type="password" placeholder="sk-…"></div>
+                <div class="rule-item"><label class="field-label">模型</label>
+                  <input class="input" id="apiModel" list="apiModelList" placeholder="选择或输入模型">
+                  <datalist id="apiModelList"></datalist></div>
+                <div class="rule-item"><label class="field-label">接口地址（自定义时修改）</label>
+                  <input class="input" id="apiEndpoint" placeholder="https://…/chat/completions"></div>
+              </div>
+              <div class="row" style="margin-top:10px">
+                <button class="btn sm" onclick="testApi()">🔗 测试连接</button>
+                <button class="btn sm" onclick="saveAiConfig()">💾 保存设置</button>
+                <span class="count-badge" id="apiTestResult"></span>
+              </div>
+            </div>
+
+            <!-- Ollama 配置 -->
+            <div id="recOllamaCfg" style="display:none">
+              <div class="rules-grid" style="margin-top:10px">
+                <div class="rule-item"><label class="field-label">API 地址</label>
+                  <input class="input" id="ollamaBase" placeholder="http://localhost:11434"></div>
+                <div class="rule-item"><label class="field-label">视觉模型</label>
+                  <select class="select" id="ollamaModel"></select></div>
+              </div>
+              <div class="row" style="margin-top:10px">
+                <button class="btn sm" onclick="detectOllama()">🔍 检测并接入已有模型</button>
+                <span class="count-badge" id="ollamaDetectResult"></span>
+              </div>
+            </div>
+
+            <!-- 分类设置 -->
+            <div class="rules-grid" style="margin-top:12px">
+              <div class="rule-item"><label class="field-label">分类模式</label>
+                <select class="select" id="classifyMode" onchange="onClassifyMode()">
+                  <option>固定分类</option><option>自定义分类</option><option>AI自由识别</option>
+                </select></div>
+              <div class="rule-item"><label class="field-label">自定义分类（逗号分隔）</label>
+                <input class="input" id="customCategories" placeholder="人物,动物,风景…"></div>
+              <div class="rule-item" id="freeStyleRow" style="display:none"><label class="field-label">AI 回复内容</label>
+                <select class="select" id="freeStyle"><option>图片描述</option><option>图片标题</option></select></div>
+              <div class="rule-item"><label class="field-label">批量大小 / 最大并发</label>
+                <div class="row" style="gap:6px">
+                  <input class="input" id="batchSize" type="number" value="8" min="1" max="50" style="width:64px">
+                  <span style="color:var(--text-3);font-size:12px">/</span>
+                  <input class="input" id="maxConcurrent" type="number" value="2" min="1" max="10" style="width:64px">
+                </div></div>
+            </div>
+
+            <!-- 标签设置 -->
+            <div class="card-sub" style="margin-top:14px">
+              <div class="row" style="gap:14px;flex-wrap:wrap">
+                <label class="check"><input type="checkbox" id="useMultiTags" onchange="onTagSettingsChange()"> 启用多标签</label>
+                <span id="tagSepRow" style="display:none;align-items:center;gap:6px">
+                  <span class="field-label" style="margin:0">分隔符</span>
+                  <input class="input" id="tagSeparator" value="_" style="width:52px">
+                  <span class="field-label" style="margin:0">最大数量</span>
+                  <input class="input" id="maxTagCount" type="number" value="3" min="1" max="10" style="width:56px">
+                </span>
+              </div>
+            </div>
+
+            <!-- 筛选设置 -->
+            <div class="card-sub" style="margin-top:10px">
+              <div class="row" style="gap:14px;flex-wrap:wrap">
+                <label class="check"><input type="checkbox" id="filterByCategory" onchange="onFilterSettingChange()"> 按分类筛选结果</label>
+                <span id="filterModeRow" style="display:none;align-items:center;gap:6px">
+                  <span class="field-label" style="margin:0">显示模式</span>
+                  <select class="select" id="filterShowMode" style="width:170px">
+                    <option value="only">只显示筛选结果</option>
+                    <option value="highlight">显示全部 + 高亮筛选</option>
+                  </select>
+                </span>
+              </div>
+            </div>
+
+            <!-- 导出设置 -->
+            <div class="card-sub" style="margin-top:10px">
+              <div class="row" style="gap:14px;flex-wrap:wrap">
+                <label class="check"><input type="checkbox" id="autoExport" onchange="onExportSettingChange()"> 识别后自动导出结果</label>
+                <span id="exportFmtRow" style="display:none;align-items:center;gap:6px">
+                  <span class="field-label" style="margin:0">导出格式</span>
+                  <select class="select" id="exportFmt" style="width:80px">
+                    <option value="json">json</option><option value="csv">csv</option><option value="txt">txt</option>
+                  </select>
+                </span>
+              </div>
+            </div>
+
+            <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:14px">
+              <button class="btn primary" onclick="runRecognition()">▶ 开始识别图片内容</button>
+              <button class="btn" id="stopRecBtn" onclick="stopRecognition()" disabled>⏹ 停止识别</button>
+              <button class="btn" onclick="clearRecognition()">🗑 清除识别结果</button>
+              <button class="btn" onclick="applyRecognitionToPreview()">🖼 按分类生成预览</button>
+              <select class="select" style="width:76px" id="recExportFmt">
+                <option value="json">json</option><option value="csv">csv</option><option value="txt">txt</option>
+              </select>
+              <button class="btn" onclick="exportRecognition()">📤 导出识别结果</button>
+              <button class="btn" onclick="exportExcel()">📊 导出清单</button>
+              <button class="btn" onclick="openModal('apiGuideModal')">📖 配置指南</button>
+              <span style="flex:1"></span>
+              <span class="count-badge" id="recModeLabel"></span>
+            </div>
+            <div class="progress" style="margin-top:10px"><div class="bar" id="recBar"></div></div>
+            <div class="stat-grid" id="statGrid">
+              <div class="stat-cell"><div class="num" style="color:var(--info)">0</div><div class="lbl">图片</div></div>
+              <div class="stat-cell"><div class="num" style="color:var(--ok)">0</div><div class="lbl">文档</div></div>
+              <div class="stat-cell"><div class="num" style="color:var(--warn)">0</div><div class="lbl">压缩包</div></div>
+              <div class="stat-cell"><div class="num" style="color:var(--err)">0</div><div class="lbl">视频</div></div>
+              <div class="stat-cell"><div class="num" style="color:var(--accent-2)">0</div><div class="lbl">音频</div></div>
+              <div class="stat-cell"><div class="num" style="color:var(--text-3)">0</div><div class="lbl">其他</div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- AI 内容命名 -->
+      <section class="tab-panel" id="panel-ai">
+        <div class="card">
+          <div class="card-title"><span class="ic">🤖</span>AI 内容命名</div>
+          <div class="card-body">
+            <div class="row" style="margin-bottom:12px">
+              <span class="field-label" style="margin:0">AI 模式：</span>
+              <div class="ai-mode" id="aiContentModeGroup">
+                <span class="chip" data-ai-mode="云端API">☁️ 云端 API</span>
+                <span class="chip" data-ai-mode="本地Ollama">🦙 本地 Ollama</span>
+              </div>
+              <span style="flex:1"></span>
+              <button class="btn primary" onclick="startAiNaming()">🤖 开始生成 AI 文件名</button>
+            </div>
+
+            <div id="aiContentApiCfg" style="display:none">
+              <div class="rules-grid" style="margin-bottom:12px">
+                <div class="rule-item"><label class="field-label">服务商</label>
+                  <select class="select" id="aiApiProvider" onchange="onAiProviderChange()"></select></div>
+                <div class="rule-item"><label class="field-label">API Key</label>
+                  <input class="input" id="aiApiKey" type="password" placeholder="sk-…"></div>
+                <div class="rule-item"><label class="field-label">模型</label>
+                  <input class="input" id="aiApiModel" list="aiApiModelList" placeholder="选择或输入模型">
+                  <datalist id="aiApiModelList"></datalist></div>
+                <div class="rule-item"><label class="field-label">接口地址（自定义时修改）</label>
+                  <input class="input" id="aiApiEndpoint" placeholder="https://…/chat/completions"></div>
+              </div>
+              <div class="row">
+                <button class="btn sm" onclick="testAiApi()">🔗 测试连接</button>
+                <span class="count-badge" id="aiApiTestResult"></span>
+              </div>
+            </div>
+
+            <div id="aiContentLocalCfg" style="display:none">
+              <div class="rules-grid" style="margin-bottom:12px">
+                <div class="rule-item"><label class="field-label">API 地址</label>
+                  <input class="input" id="localApiBase" placeholder="http://localhost:11434"></div>
+                <div class="rule-item"><label class="field-label">本地模型</label>
+                  <select class="select" id="localModel"></select></div>
+                <div class="rule-item"><label class="field-label">温度</label>
+                  <input class="input" id="localTemp" type="number" step="0.1" value="0.7" style="width:80px"></div>
+                <div class="rule-item"><label class="field-label">最大 Token</label>
+                  <input class="input" id="localMaxTokens" type="number" value="512" min="10" max="4000" style="width:90px"></div>
+              </div>
+              <div class="row">
+                <button class="btn sm" onclick="detectOllamaForAi()">🔍 检测本地模型</button>
+                <span class="count-badge" id="localDetectResult"></span>
+              </div>
+            </div>
+
+            <label class="field-label">提示词（{filename}/{content} 为占位符）</label>
+            <textarea class="input" id="aiContentPrompt" style="width:100%;resize:vertical;min-height:100px;font-size:12.5px"
+              placeholder="请根据以下内容为文件生成文件名，只返回文件名（不含扩展名）……">请根据以下内容为文件生成简短文件名（不超过15字，只返回文件名本身，不要扩展名）。&#10;文件: {filename}&#10;内容: {content}</textarea>
+            <div class="rules-grid" style="margin-top:12px">
+              <div class="rule-item"><label class="field-label">内容长度限制</label>
+                <select class="select" id="aiContentLimit">
+                  <option value="auto">自动检测</option><option value="500">前 500 字符</option>
+                  <option value="1000">前 1000 字符</option><option value="2000">前 2000 字符</option>
+                  <option value="5000">前 5000 字符</option>
+                </select></div>
+              <div class="rule-item"><label class="field-label">批量优化</label>
+                <select class="select" id="aiBatchOpt">
+                  <option value="single">单文件独立生成</option><option value="batch" selected>批量统一风格</option>
+                </select></div>
+              <div class="rule-item"><label class="field-label">支持格式</label>
+                <div style="font-size:11.5px;color:var(--text-3);padding-top:7px;line-height:1.7">.txt .md .pdf .csv .docx .xlsx .pptx .html .json .py .zip .epub 等</div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+    <div class="resize-handle" id="previewHandle" title="拖动调整预览区高度"></div>
+
+  <!-- ================= 底部预览 ================= -->
+  <footer class="preview">
+    <div class="preview-toolbar">
+      <span class="field-label" style="margin:0">搜索</span>
+      <select class="select" style="width:76px" id="searchMode" onchange="onToolbarFilter()">
+        <option value="包含">包含</option><option value="开头是">开头是</option>
+        <option value="结尾是">结尾是</option><option value="正则">正则</option>
+      </select>
+      <input class="input search" style="width:130px" placeholder="筛选文件名…" oninput="filterTable(this.value)">
+      <span class="field-label" style="margin:0">扩展名</span>
+      <select class="select" style="width:84px" id="extFilter" onchange="onToolbarFilter()">
+        <option value="全部">全部</option><option value=".jpg">.jpg</option><option value=".png">.png</option>
+        <option value=".txt">.txt</option><option value=".pdf">.pdf</option>
+      </select>
+      <span class="field-label" style="margin:0">分类</span>
+      <select class="select" style="width:96px" id="catFilter" onchange="onToolbarFilter()">
+        <option value="全部">全部</option>
+      </select>
+      <span class="field-label" style="margin:0">排序</span>
+      <select class="select" style="width:104px" id="sortBy" onchange="onToolbarFilter()">
+        <option value="name">文件名</option><option value="mtime">修改日期</option><option value="size">文件大小</option>
+        <option value="cat">分类</option><option value="ext">扩展名</option>
+        <option value="new">新文件名</option><option value="scheme">方案</option>
+      </select>
+      <button class="btn sm" style="padding:3px 7px" id="sortDirBtn" onclick="toggleSortDir()" title="切换排序方向">▲</button>
+      <span class="spacer"></span>
+      <button class="btn sm" onclick="selectAll(true)">✅ 全选</button>
+      <button class="btn sm" onclick="selectAll(false)">清空选择</button>
+      <button class="btn sm" onclick="invertSelect()">⇅ 反选</button>
+      <button class="btn sm" onclick="toggleFoldersCheck()">📁 勾选文件夹</button>
+      <span class="count-badge" id="cntLine">共 <b>0</b> · 勾选 <b>0</b> · 显示 <b>0</b></span>
+    </div>
+    <div class="preview-table">
+      <table>
+        <thead><tr>
+          <th style="width:34px">✓</th>
+          <th style="cursor:pointer" onclick="sortByColumn('old')">原文件名 → 新文件名 ↕</th>
+          <th>路径</th>
+          <th style="cursor:pointer" onclick="sortByColumn('cat')">分类 ↕</th>
+          <th>方案</th>
+          <th>状态</th>
+        </tr></thead>
+        <tbody id="fileBody"></tbody>
+      </table>
+      <div class="ctx-menu" id="ctxMenu"></div>
+    </div>
+    <div class="preview-actions">
+      <button class="btn primary" onclick="generatePreview()">👁 生成预览</button>
+      <button class="btn primary" onclick="startRename()">▶ 开始重命名</button>
+      <button class="btn" id="stopRenameBtn" onclick="stopRename()" disabled>⏹ 停止</button>
+      <button class="btn" onclick="undoRename()">↩ 撤销</button>
+      <button class="btn" onclick="refreshPreview()">⟲ 刷新预览</button>
+      <button class="btn" onclick="exportExcel()">📤 导出 Excel</button>
+      <div class="progress"><div class="bar" id="mainBar"></div></div>
+      <span class="stat-line" id="mainStatus">准备就绪</span>
+    </div>
+  </footer>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 配置指南 模态框 ============ -->
+<div class="modal-overlay" id="apiGuideModal">
+  <div class="modal">
+    <div class="modal-head">
+      <span class="m-title">📖 云端 API 配置指南</span>
+      <span class="m-sub">获取 API Key 步骤</span>
+      <button class="m-close" onclick="closeModal('apiGuideModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="help-sec">
+        <h4>☁️ 服务商配置一览</h4>
+        <table class="guide-table">
+          <thead><tr><th>服务商</th><th>注册地址</th><th>API Key 页面</th><th>图片识别</th><th>备注</th></tr></thead>
+          <tbody>
+            <tr><td><b>OpenAI</b></td><td>platform.openai.com/signup</td><td>platform.openai.com/api-keys</td><td>✅ gpt-4o</td><td>需科学上网，最贵</td></tr>
+            <tr><td><b>DeepSeek</b></td><td>platform.deepseek.com/sign_up</td><td>platform.deepseek.com/api_keys</td><td>⚠️ 纯文本</td><td>国内直连，极便宜</td></tr>
+            <tr><td><b>智谱 GLM</b></td><td>open.bigmodel.cn</td><td>open.bigmodel.cn/usercenter/apikeys</td><td>✅ glm-4v-flash</td><td><b>glm-4v-flash 完全免费</b></td></tr>
+            <tr><td><b>通义千问</b></td><td>dashscope.aliyuncs.com</td><td>dashscope.console.aliyun.com/api_key</td><td>✅ qwen-vl-plus</td><td>新用户送 100 万 token</td></tr>
+            <tr><td><b>硅基流动</b></td><td>cloud.siliconflow.cn</td><td>cloud.siliconflow.cn/account/ak</td><td>✅ Qwen3-VL</td><td>新用户送 ¥14</td></tr>
+            <tr><td><b>腾讯混元</b></td><td>cloud.tencent.com</td><td>console.cloud.tencent.com/hunyuan</td><td>✅ hunyuan-vision</td><td>按量计费</td></tr>
+            <tr><td><b>自定义</b></td><td>—</td><td>—</td><td>—</td><td>兼容 OpenAI 协议的任意服务</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="help-sec">
+        <h4>🛠 三步配置</h4>
+        <div class="help-steps">
+          <div class="help-step"><span class="hs-n">1</span><span class="hs-t"><b>注册账号</b>：在上表打开注册地址，完成注册（国内推荐智谱 GLM 或硅基流动）</span></div>
+          <div class="help-step"><span class="hs-n">2</span><span class="hs-t"><b>获取 API Key</b>：进入对应 Key 管理页面，创建并复制以 <span class="kbd">sk-</span> 开头的密钥</span></div>
+          <div class="help-step"><span class="hs-n">3</span><span class="hs-t"><b>填入并测试</b>：选择服务商 → 粘贴 Key → 点「🔗 测试连接」验证 → 保存设置</span></div>
+        </div>
+      </div>
+      <div class="help-sec">
+        <h4>⚠️ 注意事项</h4>
+        <div class="warn-box">
+          · 云端识别需要 <b>支持图片（多模态/视觉）的模型</b>：OpenAI 用 gpt-4o、智谱用 glm-4v-flash、通义用 qwen-vl-plus、硅基流动用 Qwen3-VL 系列<br>
+          · DeepSeek 的 deepseek-chat 是纯文本模型，<b>不支持图片识别</b>，但可用于「AI 内容命名」<br>
+          · API Key 保存在本地 <span class="kbd">data/ai_config.json</span>，请勿外泄<br>
+          · 免费额度有限，批量识别建议先小批量测试
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn primary" onclick="closeModal('apiGuideModal')">我知道了</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 正则参考 模态框 ============ -->
+<div class="modal-overlay" id="regexRefModal">
+  <div class="modal">
+    <div class="modal-head">
+      <span class="m-title">📚 正则表达式参考</span>
+      <span class="m-sub">Python re 语法</span>
+      <button class="m-close" onclick="closeModal('regexRefModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="help-sec">
+        <h4>🔤 常用元字符</h4>
+        <table class="guide-table">
+          <thead><tr><th>表达式</th><th>说明</th><th>示例</th></tr></thead>
+          <tbody>
+            <tr><td><code>\d</code></td><td>任意数字</td><td><code>文件_\d+</code> 匹配 文件_123</td></tr>
+            <tr><td><code>\w</code></td><td>字母/数字/下划线</td><td><code>\w+</code> 匹配 名称</td></tr>
+            <tr><td><code>\s</code></td><td>空白字符（空格/制表）</td><td><code>\s+</code> → 空格合并</td></tr>
+            <tr><td><code>.</code></td><td>任意字符（除换行）</td><td><code>a.c</code> 匹配 abc/adc</td></tr>
+            <tr><td><code>^</code></td><td>行首</td><td><code>^IMG</code> 以 IMG 开头</td></tr>
+            <tr><td><code>$</code></td><td>行尾</td><td><code>.jpg$</code> 以 .jpg 结尾</td></tr>
+            <tr><td><code>[abc]</code></td><td>字符集</td><td><code>[0-9]</code> 匹配数字</td></tr>
+            <tr><td><code>[^abc]</code></td><td>取反字符集</td><td><code>[^0-9]</code> 非数字</td></tr>
+            <tr><td><code>|</code></td><td>或</td><td><code>jpg|png</code> 匹配 jpg 或 png</td></tr>
+            <tr><td><code>(</code> <code>)</code></td><td>分组捕获</td><td><code>(abc)+</code> 匹配 abcabc</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="help-sec">
+        <h4>🔁 量词</h4>
+        <table class="guide-table">
+          <thead><tr><th>量词</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><code>*</code></td><td>0 次或多次（<code>\d*</code>）</td></tr>
+            <tr><td><code>+</code></td><td>1 次或多次（<code>\d+</code>）</td></tr>
+            <tr><td><code>?</code></td><td>0 次或 1 次（<code>colou?r</code>）</td></tr>
+            <tr><td><code>{n}</code></td><td>恰好 n 次（<code>\d{4}</code> = 4位数字）</td></tr>
+            <tr><td><code>{n,}</code></td><td>至少 n 次</td></tr>
+            <tr><td><code>{n,m}</code></td><td>n 到 m 次</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="help-sec">
+        <h4>💡 场景速查（替换为 $1 表示第 1 组）</h4>
+        <ul>
+          <li><b>去数字后缀</b>：查找 <code>\d+$</code> → 替换 <code>(空)</code>，<code>IMG_0012.jpg</code> → <code>IMG_.jpg</code></li>
+          <li><b>空格转下划线</b>：查找 <code>\s+</code> → 替换 <code>_</code>，<code>my photo</code> → <code>my_photo</code></li>
+          <li><b>提取括号内容</b>：查找 <code>\(([^)]*)\)</code> → 替换 <code>$1</code>，<code>照片(生日).jpg</code> → <code>照片生日.jpg</code></li>
+          <li><b>去前导零</b>：查找 <code>^0+</code> → 替换 <code>(空)</code>，<code>007.jpg</code> → <code>7.jpg</code></li>
+          <li><b>删除中文括号</b>：查找 <code>[（）]</code> → 替换 <code>(空)</code></li>
+          <li><b>连续空格合并</b>：查找 <code>\s+</code> → 替换 <code> </code></li>
+        </ul>
+      </div>
+      <div class="help-sec">
+        <h4>⚠️ 注意</h4>
+        <div class="warn-box">
+          正则作用于<b>生成后的新文件名</b>（先编号 → 再正则处理）。查找内容留空时正则不启用。<br>
+          替换为 <code>$1</code>、<code>$2</code> 可引用分组捕获的内容。
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn primary" onclick="closeModal('regexRefModal')">我知道了</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toastBox" style="position:fixed;bottom:22px;right:22px;z-index:99;display:flex;flex-direction:column;gap:8px"></div>
+
+<!-- ============ 打赏作者 模态框 ============ -->
+<div class="modal-overlay" id="donateModal">
+  <div class="modal" style="width:min(560px,calc(100vw - 48px))">
+    <div class="modal-head">
+      <span class="m-title">💖 请作者喝杯咖啡</span>
+      <span class="m-sub">Batch Renamer</span>
+      <button class="m-close" onclick="closeModal('donateModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="text-align:center;color:var(--text-2);font-size:13.5px;margin:0 0 14px">
+        如果这个工具帮到了你，欢迎请作者喝杯咖啡 🍵<br>
+        <span style="color:var(--text-3);font-size:12px">你的支持是持续改进的最大动力</span>
+      </p>
+      <div class="donate-grid">
+        <div class="donate-card">
+          <img src="/qr/wechat.png" alt="微信赞赏码">
+          <div class="d-label">💚 微信赞赏</div>
+        </div>
+        <div class="donate-card">
+          <img src="/qr/alipay.png" alt="支付宝收款码">
+          <div class="d-label">💙 支付宝</div>
+        </div>
+      </div>
+      <p style="text-align:center;color:var(--accent-2);font-size:12.5px;margin:14px 0 0">感谢你的慷慨，愿好运常伴 ✨</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 操作日志 模态框 ============ -->
+<div class="modal-overlay" id="logModal">
+  <div class="modal">
+    <div class="modal-head">
+      <span class="m-title">📋 操作日志</span>
+      <span class="m-sub" id="logCount"></span>
+      <button class="m-close" onclick="closeModal('logModal')">✕</button>
+    </div>
+    <div class="modal-body" style="background:var(--bg-deep)">
+      <div class="log-list" id="logList"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn sm" onclick="refreshLogs()">⟲ 刷新</button>
+      <button class="btn sm danger-ghost" onclick="clearLogs()">🗑 清空日志</button>
+      <button class="btn primary sm" onclick="closeModal('logModal')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 使用说明 模态框 ============ -->
+<div class="modal-overlay" id="helpModal">
+  <div class="modal">
+    <div class="modal-head">
+      <span class="m-title">📖 使用说明</span>
+      <span class="m-sub">完整操作指南</span>
+      <button class="m-close" onclick="closeModal('helpModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="help-sec">
+        <h4>🚀 快速开始（四步完成批量重命名）</h4>
+        <div class="help-steps">
+          <div class="help-step"><span class="hs-n">1</span><span class="hs-t"><b>添加文件夹</b>：点击左侧「📂 浏览」选择目标文件夹，或直接手动输入路径后回车；支持多个文件夹，可勾选「递归子目录」</span></div>
+          <div class="help-step"><span class="hs-n">2</span><span class="hs-t"><b>加载文件列表</b>：点击「⟳ 加载文件列表」，下方预览区显示全部文件；可通过搜索、扩展名、分类筛选，或点击列头排序</span></div>
+          <div class="help-step"><span class="hs-n">3</span><span class="hs-t"><b>设置命名规则并生成预览</b>：在「基本功能」设置前缀/编号等规则，点击「👁 生成预览」核对新文件名；确认无误后再操作</span></div>
+          <div class="help-step"><span class="hs-n">4</span><span class="hs-t"><b>开始重命名</b>：点击「▶ 开始重命名」执行真实磁盘操作；出错可点「↩ 撤销」一键恢复</span></div>
+        </div>
+      </div>
+
+      <div class="help-sec">
+        <h4>✏️ 命名规则说明</h4>
+        <ul>
+          <li><b>前缀 + 编号</b>：`旅行_01.jpg`、`旅行_02.jpg`（推荐）</li>
+          <li><b>编号 + 前缀</b>：`01_旅行.jpg`、`02_旅行.jpg`</li>
+          <li><b>前缀 + 编号 + 后缀</b>：`旅行_01_备份.jpg`</li>
+          <li><b>分类 + 编号</b>：勾选「按分类命名」后，按图片识别结果分类编号：`人物_01`、`风景_02`</li>
+          <li><b>元数据占位符</b>：前缀可插入 `{创建日期}` `{修改日期}` `{文件大小}` `{扩展名}` `{ID:3}` 等占位符</li>
+        </ul>
+      </div>
+
+      <div class="help-sec">
+        <h4>🔧 高级功能</h4>
+        <ul>
+          <li><b>添加内容</b>：在文件名前/后统一插入文字</li>
+          <li><b>查找替换</b>：批量替换文件名中的指定文字</li>
+          <li><b>正则替换</b>：在「正则替换」页使用正则表达式（留空即不启用），如 `\d+` 去除数字、`\s+` 空格转下划线</li>
+          <li><b>多方案管理</b>：把当前规则保存为「方案」，一键切换不同命名风格；方案存储于 `data/schemes/`</li>
+          <li><b>模板管理</b>：保存/加载常用规则模板，模板存储于 `data/templates/`</li>
+          <li><b>导出 Excel</b>：将重命名清单导出为 xlsx（原文件名/新文件名/状态/分类/所在文件夹）</li>
+        </ul>
+      </div>
+
+      <div class="help-sec">
+        <h4>🖼️ 图片内容识别（4 种模式）</h4>
+        <ul>
+          <li><b>⚙️ 规则分类</b>：按扩展名自动分类（图片/文档/压缩包/视频/音频），无需联网</li>
+          <li><b>🖥 本地 CLIP</b>：自动使用 `resources/model_pack` 离线模型，识别内容语义（人物/动物/风景…）</li>
+          <li><b>🦙 Ollama 多模态</b>：连接本机 Ollama 视觉模型（如 minicpm-o、qwen2.5vl），点「🔍 检测并接入已有模型」自动发现</li>
+          <li><b>☁️ 云端 AI API</b>：支持 OpenAI / DeepSeek / 智谱 GLM / 通义千问 / 硅基流动 / 腾讯混元 / 自定义 7 种服务商，填入 API Key 后点「🔗 测试连接」验证</li>
+          <li>分类模式支持<b>固定分类 / 自定义分类 / AI 自由识别</b>（描述、标题、多标签）</li>
+        </ul>
+      </div>
+
+      <div class="help-sec">
+        <h4>🤖 AI 内容命名</h4>
+        <ul>
+          <li>根据文件<b>内容</b>智能生成文件名，支持 txt / md / pdf / docx / xlsx / pptx / zip / epub 等格式</li>
+          <li>两种模式：☁️ 云端 API（需 Key）或 🦙 本地 Ollama（自动检测模型）</li>
+          <li>可自定义提示词（`{filename}`、`{content}` 占位符）、内容长度限制、批量统一风格</li>
+        </ul>
+      </div>
+
+      <div class="help-sec">
+        <h4>⌨️ 快捷键</h4>
+        <p style="margin:0 0 8px;display:flex;gap:8px;flex-wrap:wrap">
+          <span class="kbd">Ctrl+O</span> 选择文件夹
+          <span class="kbd">Ctrl+R</span> 开始重命名
+          <span class="kbd">Ctrl+Z</span> 撤销重命名
+        </p>
+      </div>
+
+      <div class="help-sec">
+        <h4>⚠️ 注意事项</h4>
+        <div class="warn-box">
+          ⚠️ <b>请务必备份重要文件后再操作！</b><br>
+          · 重命名是真实的磁盘操作，执行后可通过「撤销」恢复最近一次操作<br>
+          · 云端 AI 识别需要有效的 API Key，识别失败时会在状态栏显示原因<br>
+          · Ollama 首次加载视觉模型可能需要较长时间<br>
+          · 撤销日志保存在 `data/_undo_logs/`，与桌面版兼容<br>
+          · AI 配置（含 API Key）保存在 `data/ai_config.json`，请勿外泄
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn primary" onclick="closeModal('helpModal')">我知道了</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ================= API 助手 ================= */
+async function api(path, method="GET", body=null){
+  const opt={method,headers:{}};
+  if(body!==null){ opt.headers["Content-Type"]="application/json"; opt.body=JSON.stringify(body); }
+  const resp=await fetch("/api"+path,opt);
+  const data=await resp.json().catch(()=>({}));
+  if(!resp.ok) throw new Error(data.error||("请求失败 "+resp.status));
+  return data;
+}
+const $ = id=>document.getElementById(id);
+
+/* ================= 状态 ================= */
+let files=[];        // {id,old,ext,relpath,size,mtime,cat,checked,new,status,tag}
+let folders=[];      // 文件夹路径（字符串）
+let selFolderIdx=0;
+let renaming=false;
+
+function getScheme(){
+  const m={pn:"prefix_num",np:"num_prefix",pns:"prefix_num_suffix"}[$("inMode").value]||"prefix_num";
+  const s={
+    prefix:$("inPrefix").value, start_num:parseInt($("inStart").value||"1",10),
+    pad_width:parseInt($("inPad").value||"2",10), suffix:$("inSuffix").value, mode:m,
+    add_text:$("addText").value,
+    add_position:document.querySelector('input[name="addPos"]:checked').value,
+    find_text:$("findText").value, replace_text:$("replaceText").value,
+    regex_enabled:!!$("regexFind").value, regex_find:$("regexFind").value,
+    regex_replace:$("regexReplace").value,
+    regex_case_sensitive:$("regexCase").checked, regex_lowercase:$("regexLower").checked,
+    use_category:$("useCategory").checked,
+    group_by_ext:$("groupByExt").checked,
+  };
+  if(s.use_category){
+    const cats={};
+    files.forEach(f=>{ cats[f.id]=f.cat||"其他"; });
+    s.categories=cats;
+  }
+  return s;
+}
+function esc(s){ return String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+/* ================= 文件夹 ================= */
+function renderFolders(){
+  const el=$("folderList");
+  if(!folders.length){
+    el.innerHTML='<div class="folder-empty"><div class="big">📂</div>点击「浏览」或输入路径添加文件夹</div>';
+    return;
+  }
+  el.innerHTML=folders.map((f,i)=>
+    `<div class="folder-item ${i===selFolderIdx?"active":""}" onclick="selectFolder(this,${i})">
+       <span class="f-ic">📁</span><span class="f-name" title="${esc(f)}">${esc(f)}</span>
+     </div>`).join("");
+}
+function selectFolder(el,i){ selFolderIdx=i; renderFolders(); }
+async function refreshFolders(){
+  try{
+    const d=await api("/folders");
+    folders=d.folders||[];
+    if(selFolderIdx>=folders.length) selFolderIdx=0;
+    renderFolders();
+  }catch(e){ toast("加载文件夹失败："+e.message); }
+}
+async function pickFolder(){
+  try{
+    const d=await api("/folders/pick","POST",{});
+    folders=d.folders||[];
+    renderFolders();
+    toast(folders.length?"已添加文件夹":"未选择文件夹");
+  }catch(e){ toast("无法打开目录选择框，请手动输入路径："+e.message); }
+}
+async function addManualFolder(){
+  const p=$("manualPath").value.trim();
+  if(!p){ toast("请输入文件夹路径"); return; }
+  try{
+    const d=await api("/folders/add","POST",{path:p});
+    folders=d.folders||[]; $("manualPath").value="";
+    renderFolders(); toast("已添加文件夹");
+  }catch(e){ toast(e.message); }
+}
+async function removeFolder(){
+  if(!folders.length){ toast("没有可删除的文件夹"); return; }
+  const path=folders[selFolderIdx]||folders[0];
+  try{
+    const d=await api("/folders/remove","POST",{path});
+    folders=d.folders||[];
+    if(selFolderIdx>=folders.length) selFolderIdx=0;
+    renderFolders(); toast("已删除文件夹");
+  }catch(e){ toast(e.message); }
+}
+async function clearFolders(){
+  await api("/folders/clear","POST",{});
+  folders=[]; files=[]; selFolderIdx=0;
+  renderFolders(); renderTable();
+  toast("已清空文件夹列表");
+}
+async function loadFiles(){
+  if(!folders.length){ toast("请先添加文件夹"); return; }
+  try{
+    const d=await api("/files/load","POST",{
+      folders, recursive:$("optRecursive").checked,
+      only_folders:$("optOnlyFolder").checked, filter_system:true,
+    });
+    files=(d.files||[]).map(f=>({...f,checked:true,new:"",status:"待处理",tag:"pending",scheme:null}));
+    refreshCatFilter();
+    renderTable(); updateStatGrid();
+    toast(`已加载 ${files.length} 个文件/文件夹`);
+  }catch(e){ toast("加载失败："+e.message); }
+}
+
+/* ================= 标签页 ================= */
+document.getElementById("tabs").addEventListener("click", e=>{
+  const tab=e.target.closest(".tab"); if(!tab) return;
+  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active",t===tab));
+  document.querySelectorAll(".tab-panel").forEach(p=>p.classList.toggle("active",p.id==="panel-"+tab.dataset.tab));
+});
+
+/* ================= 命名预览 ================= */
+function buildName(idx){
+  const prefix=$("inPrefix").value;
+  const start=parseInt($("inStart").value||"1",10);
+  const pad=parseInt($("inPad").value||"2",10);
+  const suffix=$("inSuffix").value;
+  const mode=$("inMode").value;
+  const num=String(start+idx).padStart(pad,"0");
+  let base;
+  if(mode==="np") base=`${num}_${prefix}`;
+  else if(mode==="pns") base=suffix?`${prefix}_${num}_${suffix}`:`${prefix}_${num}`;
+  else base=`${prefix}_${num}`;
+  return base;
+}
+let liveTimer=null;
+function livePreview(){
+  clearTimeout(liveTimer);
+  liveTimer=setTimeout(()=>{
+    const el=$("rulePreview");
+    if(!$("inPrefix").value){ el.innerHTML='<span style="color:var(--text-3)">输入前缀后实时预览…</span>'; return; }
+    const samples=[0,1,2].map(i=>buildName(i)).map(n=>`<span class="sample">${esc(n)}</span>`);
+    el.innerHTML=`<span>示例</span><span class="arrow">→</span> ${samples.join(" &nbsp;")}`;
+    if(files.length){
+      // 实时预览所有勾选文件（而非仅前 3 个），保证「新文件名」列与实际一致
+      const ids=files.filter(f=>f.checked).map(f=>f.id);
+      if(!ids.length) return;
+      api("/preview","POST",{ids,scheme:getScheme()}).then(d=>{
+        const r=d.results||{};
+        files.forEach(f=>{
+          if(f.checked&&r[f.id]!==undefined){
+            f.new=r[f.id].new||"";
+            f.status=r[f.id].status||"待处理";
+          }
+        });
+        renderTable();
+      }).catch(()=>{});
+    }
+  },300);
+}
+
+/* ================= 表格 ================= */
+let _sortDir={name:1,mtime:1,size:1,cat:-1,ext:1,new:1,scheme:1};  // 点击列头/下拉排序方向记忆
+let _ctxFid=null;  // 右键菜单目标文件
+
+function getVisibleFiles(){
+  const q=(window._filter||"").toLowerCase();
+  const mode=$("searchMode")?$("searchMode").value:"包含";
+  const extF=$("extFilter")?$("extFilter").value:"全部";
+  const catF=$("catFilter")?$("catFilter").value:"全部";
+  let list=files.filter(f=>{
+    // 搜索
+    if(q){
+      if(mode==="包含"){ if(!f.old.toLowerCase().includes(q)) return false; }
+      else if(mode==="开头是"){ if(!f.old.toLowerCase().startsWith(q)) return false; }
+      else if(mode==="结尾是"){ if(!f.old.toLowerCase().endsWith(q)) return false; }
+      else if(mode==="正则"){
+        try{ if(!new RegExp(window._filter).test(f.old)) return false; }
+        catch(e){ return true; }
+      }
+    }
+    if(extF!=="全部"&&(f.ext||"").toLowerCase()!==extF.toLowerCase()) return false;
+    if(catF!=="全部"&&(f.cat||"其他")!==catF) return false;
+    // 识别页「按分类筛选结果」
+    if(window._filterByCat){
+      const curCat=$("catFilter")?$("catFilter").value:"全部";
+      if(curCat!=="全部"&&(f.cat||"其他")!==curCat) return false;
+    }
+    return true;
+  });
+  const sortBy=$("sortBy")?$("sortBy").value:"name";
+  const dir=_sortDir[sortBy]||1;
+  list=[...list].sort((a,b)=>{
+    if(sortBy==="mtime") return dir*String(b.mtime||"").localeCompare(String(a.mtime||""));
+    if(sortBy==="size") return dir*((b.size||0)-(a.size||0));
+    if(sortBy==="cat") return dir*String(a.cat||"其他").localeCompare(String(b.cat||"其他"),"zh-Hans-CN");
+    if(sortBy==="ext") return dir*String(a.ext||"").localeCompare(String(b.ext||""));
+    if(sortBy==="new") return dir*String(a.new||a.old).localeCompare(String(b.new||b.old),"zh-Hans-CN");
+    if(sortBy==="scheme") return dir*String(a.scheme||"").localeCompare(String(b.scheme||""),"zh-Hans-CN");
+    return dir*a.old.localeCompare(b.old,"zh-Hans-CN");
+  });
+  return list;
+}
+
+function statusMap(s){
+  // 状态文本 → 徽章样式
+  if(!s) return ["sp-pending","待处理"];
+  if(s==="成功") return ["sp-ok","成功"];
+  if(s==="待处理"||s==="待重命名") return ["sp-pending","待处理"];
+  if(s==="跳过"||s==="已跳过") return ["sp-warn","跳过"];
+  return ["sp-err",s];  // 失败: xxx / 错误: xxx
+}
+
+function renderTable(){
+  const body=$("fileBody");
+  const list=getVisibleFiles();
+  const schemeName=$("selScheme")?$("selScheme").value:"默认方案";
+  // 识别页「只显示筛选结果」模式
+  if(window._filterByCat&&$("filterShowMode")&&$("filterShowMode").value==="only"){
+    // getVisibleFiles 已过滤，直接渲染
+  }
+  const rows=list.map(f=>{
+    const nameCell=f.new
+      ? `<span class="old">${esc(f.old)}</span> → <span class="new">${esc(f.new)}</span>`
+      : `<span class="old">${esc(f.old)}</span>`;
+    const [cls,txt]=statusMap(f.status);
+    const idx=files.indexOf(f);
+    const pathShort=f.folder||"";
+    return `<tr class="row-${f.tag}" data-idx="${idx}" oncontextmenu="showCtxMenu(event,${idx})">
+      <td><label class="check"><input type="checkbox" data-idx="${idx}" ${f.checked?"checked":""} onchange="toggleOne(${idx},this.checked)"></label></td>
+      <td>${nameCell}</td>
+      <td class="path-cell" title="${esc(pathShort)}">${esc(pathShort)}</td>
+      <td><span class="cat-tag">${esc(f.cat||"其他")}</span></td>
+      <td>${esc(f.scheme||schemeName)}</td>
+      <td data-col="status"><span class="status-pill ${cls}">${txt}</span></td>
+    </tr>`;
+  }).join("");
+  body.innerHTML=rows||'<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:26px">请先添加文件夹并加载文件列表</td></tr>';
+  updateCounts(list.length);
+  refreshCatFilter();
+}
+function refreshCatFilter(){
+  // 动态生成分类下拉（包含当前所有出现的分类）
+  const sel=$("catFilter");
+  if(!sel) return;
+  const cats={};
+  files.forEach(f=>{ const c=f.cat||"其他"; cats[c]=(cats[c]||0)+1; });
+  const cur=sel.value;
+  const entries=Object.entries(cats).sort((a,b)=>b[1]-a[1]);
+  sel.innerHTML='<option value="全部">全部</option>'+
+    entries.map(([c,n])=>`<option value="${esc(c)}">${esc(c)} (${n})</option>`).join("");
+  if([...entries.map(e=>e[0]),"全部"].includes(cur)) sel.value=cur;
+  else sel.value="全部";
+}
+function onToolbarFilter(){ renderTable(); }
+function updateCounts(visibleCount){
+  const line=$("cntLine");
+  if(!line) return;
+  const checked=files.filter(f=>f.checked).length;
+  line.innerHTML=`共 <b id="cntTotal">${files.length}</b> · 勾选 <b id="cntChecked">${checked}</b> · 显示 <b>${visibleCount!==undefined?visibleCount:files.length}</b>`;
+}
+function toggleOne(i,v){ if(files[i]){ files[i].checked=v; updateCounts(); } }
+function selectAll(v){ files.forEach(f=>f.checked=v); renderTable(); }
+function invertSelect(){ files.forEach(f=>f.checked=!f.checked); renderTable(); }
+function filterTable(v){ window._filter=v; renderTable(); }
+function toggleSortDir(){
+  const key=$("sortBy").value||"name";
+  _sortDir[key]=(_sortDir[key]||1)*-1;
+  const b=$("sortDirBtn");
+  if(b) b.textContent=(_sortDir[key]>0?"▲":"▼");
+  renderTable();
+}
+function toggleFoldersCheck(){
+  // 勾选/取消勾选所有文件夹条目
+  const hasFolder=files.some(f=>f._is_folder);
+  if(!hasFolder){ toast("当前列表中没有文件夹条目"); return; }
+  const allChecked=files.filter(f=>f._is_folder).every(f=>f.checked);
+  files.forEach(f=>{ if(f._is_folder) f.checked=!allChecked; });
+  renderTable();
+  toast(allChecked?"已取消勾选所有文件夹":"已勾选所有文件夹");
+}
+
+/* ================= 右键菜单 ================= */
+function showCtxMenu(e,idx){
+  e.preventDefault();
+  _ctxFid=idx;
+  const f=files[idx];
+  if(!f) return;
+  const menu=$("ctxMenu");
+  const isFolder=f._is_folder;
+  menu.innerHTML=
+    `<div class="cm-item" onclick="ctxAction('check')">✅ 勾选该项</div>
+     <div class="cm-item" onclick="ctxAction('uncheck')">☐ 取消勾选该项</div>
+     <div class="cm-item" onclick="ctxAction('invert')">⇅ 反选勾选</div>
+     <div class="cm-sep"></div>
+     ${isFolder?"":`<div class="cm-item" onclick="ctxAction('open')">📂 打开文件</div>
+     <div class="cm-item" onclick="ctxAction('reveal')">📍 定位到文件位置</div>
+     <div class="cm-item" onclick="ctxAction('copyNew')">📋 复制新文件名</div>
+     <div class="cm-item" onclick="ctxAction('copyPath')">📎 复制文件路径</div>
+     <div class="cm-sep"></div>
+     <div class="cm-item" onclick="ctxAction('applyChecked')">🎯 应用当前方案到勾选</div>
+     <div class="cm-item" onclick="ctxAction('applyAll')">🎯 应用当前方案到全部</div>`}
+     <div class="cm-sep"></div>
+     <div class="cm-item" onclick="ctxAction('expand')">🌳 展开未递归文件夹</div>
+     <div class="cm-item" onclick="ctxAction('collapse')">🌲 收起未递归文件夹</div>`;
+  menu.classList.add("show");
+  // 定位菜单，防溢出
+  const mw=menu.offsetWidth, mh=menu.offsetHeight;
+  menu.style.left=Math.min(e.clientX,window.innerWidth-mw-8)+"px";
+  menu.style.top=Math.min(e.clientY,window.innerHeight-mh-8)+"px";
+}
+function hideCtxMenu(){ const m=$("ctxMenu"); if(m) m.classList.remove("show"); }
+function ctxAction(action){
+  const f=files[_ctxFid];
+  hideCtxMenu();
+  if(!f) return;
+  const allFiles=files.filter(x=>!x._is_folder);
+  const winOpen=name=>{
+    fetch(`/api/open/file`,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({path:name})}).then(r=>r.json()).then(d=>{ if(d&&d.error) toast(d.error); }).catch(()=>toast("无法打开文件"));
+  };
+  switch(action){
+    case "check": f.checked=true; renderTable(); break;
+    case "uncheck": f.checked=false; renderTable(); break;
+    case "invert": files.forEach(x=>x.checked=!x.checked); renderTable(); break;
+    case "open":
+      winOpen(f.folder?f.folder.replace(/\\$/,"")+"\\"+f.old:f.old); break;
+    case "reveal":
+      fetch(`/api/open/reveal`,{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({path:f.folder?f.folder+"\\"+f.old:f.old})}).then(r=>r.json())
+        .then(d=>{ if(d&&d.error) toast(d.error); }).catch(()=>toast("无法定位文件"));
+      break;
+    case "copyNew": copyText(f.new||f.old); break;
+    case "copyPath": copyText(f.folder?f.folder+"\\"+f.old:f.old); break;
+    case "applyChecked": applySchemeToChecked(); break;
+    case "applyAll": setAllScheme(); break;
+    case "expand": toast("文件夹已递归展开（重新加载生效）"); loadFiles(); break;
+    case "collapse": toast("文件夹已收起（重新加载生效）"); loadFiles(); break;
+  }
+}
+function copyText(t){
+  const ta=document.createElement("textarea");
+  ta.value=t; document.body.appendChild(ta); ta.select();
+  try{ document.execCommand("copy"); toast("已复制："+(t.length>30?t.slice(0,30)+"…":t)); }
+  catch(e){ toast("复制失败"); }
+  document.body.removeChild(ta);
+}
+document.addEventListener("click",e=>{
+  if(!e.target.closest(".ctx-menu")) hideCtxMenu();
+});
+document.addEventListener("contextmenu",e=>{
+  if(!e.target.closest("#fileBody")) hideCtxMenu();
+});
+document.addEventListener("keydown",e=>{ if(e.key==="Escape") hideCtxMenu(); });
+
+/* ================= 列头排序 ================= */
+function sortByColumn(col){
+  if(col==="old"){ _sortDir.name*=-1; if($("sortBy")) $("sortBy").value="name"; renderTable(); }
+  else if(col==="cat"){
+    if(!_sortDir.cat) _sortDir.cat=-1; else _sortDir.cat*=-1;
+    if($("sortBy")) $("sortBy").value="cat";
+    renderTable();
+  }
+}
+
+/* ================= 预览 & 重命名 ================= */
+function setBar(text, pct){
+  const bar=$("mainBar");
+  bar.style.transition="none"; bar.style.width=(pct||0)+"%";
+  $("mainStatus").textContent=text;
+  if(pct===100){ bar.style.transition="width .3s ease"; }
+}
+async function generatePreview(){
+  const ids=files.filter(f=>f.checked).map(f=>f.id);
+  if(!ids.length){ toast("请先勾选文件"); return; }
+  setBar("正在生成预览…",8);
+  try{
+    const d=await api("/preview","POST",{ids,scheme:getScheme()});
+    const r=d.results||{};
+    files.forEach(f=>{
+      if(r[f.id]!==undefined){
+        f.new=r[f.id].new||"";
+        f.status=r[f.id].status||"待处理";
+        f.scheme=$("selScheme")?$("selScheme").value:null;  // 记录方案来源，方案列与实际一致
+        f.tag="pending";
+      }
+    });
+    renderTable();
+    setBar(`预览就绪 · 共 ${ids.length} 个文件`,100);
+    toast("预览已生成，请核对新文件名");
+  }catch(e){ setBar("预览失败",0); toast("预览失败："+e.message); }
+}
+async function startRename(){
+  if(renaming) return;
+  const ids=files.filter(f=>f.checked).map(f=>f.id);
+  if(!ids.length){ toast("请先勾选要重命名的文件"); return; }
+  renaming=true;
+  if($("stopRenameBtn")) $("stopRenameBtn").disabled=false;
+  setBar("正在重命名…",8);
+  try{
+    const s=await api("/rename","POST",{ids,scheme:getScheme()});
+    // 用后端逐文件结果精确更新状态，不再重载（避免状态丢失）
+    const r=s.results||{};
+    files.forEach(f=>{
+      if(r[f.id]!==undefined){
+        const st=r[f.id].status||"";
+        f.status=st;
+        f.tag=st==="成功"?"ok":(st==="跳过"?"warn":(st.startsWith("失败")?"err":"pending"));
+        if(st==="成功"){ f.new=r[f.id].new||f.new; }
+      }
+    });
+    renderTable();
+    const stopped=s.stopped?" · 已停止":"";
+    setBar(`处理完成！成功 ${s.success} · 失败 ${s.failed} · 跳过 ${s.skipped}${stopped}`,100);
+    toast(`重命名${s.stopped?"已停止":""} ✅ 成功 ${s.success}`);
+  }catch(e){ setBar("重命名失败",0); toast("重命名失败："+e.message); }
+  renaming=false;
+  if($("stopRenameBtn")) $("stopRenameBtn").disabled=true;
+}
+async function stopRename(){
+  try{
+    await api("/rename/stop","POST",{});
+    setBar("正在停止重命名…",8);
+    toast("已请求停止重命名");
+  }catch(e){ toast("停止失败："+e.message); }
+}
+async function refreshPreview(){
+  const ids=files.filter(f=>f.checked).map(f=>f.id);
+  if(!ids.length){ toast("请先勾选文件"); return; }
+  try{
+    const d=await api("/preview","POST",{ids,scheme:getScheme()});
+    const r=d.results||{};
+    files.forEach(f=>{
+      if(r[f.id]!==undefined){
+        f.new=r[f.id].new||"";
+        f.status=r[f.id].status||"待处理";
+        f.scheme=$("selScheme")?$("selScheme").value:null;
+        f.tag="pending";
+      }
+    });
+    renderTable();
+    setBar(`预览已刷新 · ${ids.length} 个文件`,100);
+  }catch(e){ setBar("刷新失败",0); toast("刷新失败："+e.message); }
+}
+async function undoRename(){
+  try{
+    const d=await api("/undo","POST",{});
+    toast(`撤销完成：成功 ${d.success} · 失败 ${d.failed} · 跳过 ${d.skipped}`);
+    setBar(`撤销完成（成功 ${d.success}）`,100);
+    // 撤销后重新加载真实磁盘状态
+    await loadFiles();
+  }catch(e){ toast("撤销失败："+e.message); }
+}
+
+/* ================= 正则 ================= */
+function applyRegexPreset(v){
+  if(!v) return;
+  const map={digits:["\\d+",""],spaces:["\\s+","_"],extract:["\\(([^)]*)\\)","$1"],leading:["^0+",""]};
+  const [f,r]=map[v]||["",""];
+  $("regexFind").value=f; $("regexReplace").value=r;
+  const names={digits:"去数字后缀",spaces:"空格转下划线",extract:"提取括号内容",leading:"去前导零"};
+  toast(`已应用预设：${names[v]}`);
+  regexLive();
+}
+function regexLive(){
+  const f=$("regexFind").value.trim(), r=$("regexReplace").value;
+  if(!f){ $("regexResult").textContent="→ 未启用正则（输入查找内容后生效）"; return; }
+  let out="IMG_0012.jpg";
+  try{
+    out=out.replace(new RegExp(f,$("regexCase").checked?"":"i"),r);
+  }catch(e){ out="正则语法错误"; }
+  $("regexResult").textContent="→ "+out;
+}
+
+/* ================= AI 配置 ================= */
+let aiCfg={};
+async function loadAiConfig(){
+  try{
+    const d=await api("/ai/config");
+    aiCfg=d.config||{};
+    applyAiConfigToUI();
+  }catch(e){ toast("加载 AI 配置失败："+e.message); }
+}
+function collectAiConfig(){
+  const cfg={
+    recognition_mode:window._recMode||"rule",
+    api_provider:$("apiProvider").value,
+    api_key:$("apiKey").value,
+    api_model:$("apiModel").value,
+    api_endpoint:$("apiEndpoint").value,
+    ollama_base:$("ollamaBase").value,
+    ollama_model:$("ollamaModel").value,
+    classify_mode:$("classifyMode").value,
+    custom_categories:$("customCategories").value,
+    free_style:$("freeStyle").value,
+    batch_size:parseInt($("batchSize").value||"8",10),
+    max_concurrent:parseInt($("maxConcurrent").value||"2",10),
+    ai_content_mode:window._aiContentMode||"云端API",
+    ai_content_prompt:$("aiContentPrompt").value,
+    ai_content_limit:$("aiContentLimit").value,
+    ai_batch_opt:$("aiBatchOpt").value,
+    local_model:$("localModel").value,
+    local_api_base:$("localApiBase").value,
+    local_temperature:parseFloat($("localTemp").value||"0.7"),
+    local_max_tokens:parseInt($("localMaxTokens").value||"512",10),
+  };
+  // AI 内容命名页的云端配置优先（独立字段），否则回退识别页配置
+  const aiProv=$("aiApiProvider")?$("aiApiProvider").value:"";
+  if(aiProv){ cfg.api_provider=aiProv; }
+  if($("aiApiKey")&&$("aiApiKey").value){ cfg.api_key=$("aiApiKey").value; }
+  if($("aiApiModel")&&$("aiApiModel").value){ cfg.api_model=$("aiApiModel").value; }
+  if($("aiApiEndpoint")&&$("aiApiEndpoint").value){ cfg.api_endpoint=$("aiApiEndpoint").value; }
+  return cfg;
+}
+function applyAiConfigToUI(){
+  if($("apiProvider")){
+    const sel=$("apiProvider");
+    sel.innerHTML="";
+    // 服务商列表是对象 {名称:{...}}，需用 Object.keys 遍历
+    const names=Object.keys(window._providers||{});
+    if(!names.length){
+      const opt=document.createElement("option");
+      opt.value=""; opt.textContent="服务商列表加载失败";
+      sel.appendChild(opt);
+    }else{
+      names.forEach(p=>{
+        const opt=document.createElement("option");
+        opt.value=p; opt.textContent=p;
+        sel.appendChild(opt);
+      });
+    }
+    sel.value=(aiCfg.api_provider&&names.includes(aiCfg.api_provider))?aiCfg.api_provider:(names[0]||"");
+    onProviderChange();
+    $("apiKey").value=aiCfg.api_key||"";
+    $("apiModel").value=aiCfg.api_model||"";
+    $("apiEndpoint").value=aiCfg.api_endpoint||"";
+    $("ollamaBase").value=aiCfg.ollama_base||"http://localhost:11434";
+    $("ollamaModel").value=aiCfg.ollama_model||"";
+    $("classifyMode").value=aiCfg.classify_mode||"固定分类";
+    $("customCategories").value=aiCfg.custom_categories||"";
+    $("freeStyle").value=aiCfg.free_style||"图片描述";
+    $("batchSize").value=aiCfg.batch_size||8;
+    $("maxConcurrent").value=aiCfg.max_concurrent||2;
+    $("aiContentPrompt").value=aiCfg.ai_content_prompt||"";
+    $("aiContentLimit").value=aiCfg.ai_content_limit||"auto";
+    $("aiBatchOpt").value=aiCfg.ai_batch_opt||"batch";
+    $("localApiBase").value=aiCfg.local_api_base||"http://localhost:11434";
+    $("localModel").value=aiCfg.local_model||"";
+    $("localTemp").value=aiCfg.local_temperature||0.7;
+    if($("localMaxTokens")) $("localMaxTokens").value=aiCfg.local_max_tokens||512;
+    // AI 内容命名页云端配置：默认与识别页共享
+    if($("aiApiProvider")){
+      fillProviderSelect($("aiApiProvider"));
+      $("aiApiProvider").value=(aiCfg.api_provider&&Object.keys(window._providers||{}).includes(aiCfg.api_provider))?aiCfg.api_provider:(Object.keys(window._providers||{})[0]||"");
+      onAiProviderChange();
+      $("aiApiKey").value=aiCfg.api_key||"";
+      $("aiApiModel").value=aiCfg.api_model||"";
+      $("aiApiEndpoint").value=aiCfg.api_endpoint||"";
+    }
+    setRecMode(aiCfg.recognition_mode||"rule");
+    setAiContentMode(aiCfg.ai_content_mode||"云端API");
+    onClassifyMode();
+  }
+}
+function fillProviderSelect(sel){
+  const names=Object.keys(window._providers||{});
+  sel.innerHTML="";
+  if(!names.length){
+    const opt=document.createElement("option");
+    opt.value=""; opt.textContent="服务商列表加载失败";
+    sel.appendChild(opt);
+  }else{
+    names.forEach(p=>{
+      const opt=document.createElement("option");
+      opt.value=p; opt.textContent=p;
+      sel.appendChild(opt);
+    });
+  }
+}
+function onAiProviderChange(){
+  const p=$("aiApiProvider").value;
+  const info=(window._providers||{})[p];
+  if(!info) return;
+  $("aiApiEndpoint").value=info.endpoint||"";
+  $("aiApiModel").value=info.default_model||"";
+  const dl=$("aiApiModelList");
+  dl.innerHTML="";
+  (info.models||[]).forEach(m=>{
+    const opt=document.createElement("option");
+    opt.value=m; dl.appendChild(opt);
+  });
+}
+async function testAiApi(){
+  const r=$("aiApiTestResult");
+  r.textContent="测试中…";
+  try{
+    // 用 AI 内容命名页的配置构造测试请求
+    const cfg=collectAiConfig();
+    cfg.api_provider=$("aiApiProvider").value;
+    cfg.api_key=$("aiApiKey").value;
+    cfg.api_model=$("aiApiModel").value;
+    cfg.api_endpoint=$("aiApiEndpoint").value;
+    const d=await api("/ai/test","POST",{config:cfg});
+    r.textContent=d.message||"";
+    r.style.color=d.ok?"var(--ok)":"var(--err)";
+  }catch(e){ r.textContent="失败："+e.message; r.style.color="var(--err)"; }
+}
+async function saveAiConfig(){
+  try{
+    await api("/ai/config","POST",{config:collectAiConfig()});
+    toast("AI 设置已保存");
+  }catch(e){ toast("保存失败："+e.message); }
+}
+async function testApi(){
+  const r=document.getElementById("apiTestResult");
+  r.textContent="测试中…";
+  try{
+    // 传当前表单实时配置，避免用旧保存值
+    const d=await api("/ai/test","POST",{config:collectAiConfig()});
+    r.textContent=d.message||"";
+    r.style.color=d.ok?"var(--ok)":"var(--err)";
+  }catch(e){ r.textContent="失败："+e.message; r.style.color="var(--err)"; }
+}
+async function detectOllama(){
+  const r=$("ollamaDetectResult");
+  r.textContent="检测中…";
+  try{
+    const d=await api("/ai/detect-ollama","POST",{base:$("ollamaBase").value});
+    const sel=$("ollamaModel");
+    sel.innerHTML="";
+    if(d.models&&d.models.length){
+      (d.models||[]).forEach(m=>{
+        const opt=document.createElement("option");
+        opt.value=m; opt.textContent=m;
+        sel.appendChild(opt);
+      });
+      r.textContent=`发现 ${d.models.length} 个模型`;
+      r.style.color="var(--ok)";
+      aiCfg.ollama_model=d.models[0];
+    }else{
+      r.textContent=d.error||"未发现模型";
+      r.style.color="var(--err)";
+    }
+  }catch(e){ r.textContent="失败："+e.message; r.style.color="var(--err)"; }
+}
+async function detectOllamaForAi(){
+  const r=$("localDetectResult");
+  r.textContent="检测中…";
+  try{
+    const d=await api("/ai/detect-ollama","POST",{base:$("localApiBase").value});
+    const sel=$("localModel");
+    sel.innerHTML="";
+    if(d.models&&d.models.length){
+      (d.models||[]).forEach(m=>{
+        const opt=document.createElement("option");
+        opt.value=m; opt.textContent=m;
+        sel.appendChild(opt);
+      });
+      r.textContent=`发现 ${d.models.length} 个模型`;
+      r.style.color="var(--ok)";
+    }else{
+      r.textContent=d.error||"未发现模型";
+      r.style.color="var(--err)";
+    }
+  }catch(e){ r.textContent="失败："+e.message; r.style.color="var(--err)"; }
+}
+function onProviderChange(){
+  const p=$("apiProvider").value;
+  const info=(window._providers||{})[p];
+  if(!info) return;
+  $("apiEndpoint").value=info.endpoint||"";
+  $("apiModel").value=info.default_model||"";
+  const dl=$("apiModelList");
+  dl.innerHTML="";
+  (info.models||[]).forEach(m=>{
+    const opt=document.createElement("option");
+    opt.value=m; dl.appendChild(opt);
+  });
+}
+function onClassifyMode(){
+  const m=$("classifyMode").value;
+  $("freeStyleRow").style.display=(m==="AI自由识别")?"":"none";
+}
+
+/* ================= 图片识别 ================= */
+function setRecMode(mode){
+  window._recMode=mode;
+  document.querySelectorAll("#recModeGroup .chip").forEach(c=>c.classList.toggle("active",c.dataset.rec===mode));
+  $("recRuleNote").style.display=mode==="rule"?"":"none";
+  $("recApiCfg").style.display=mode==="api"?"":"none";
+  $("recOllamaCfg").style.display=mode==="ollama"?"":"none";
+  const labels={rule:"⚙️ 规则分类",clip:"🖥 本地 CLIP",ollama:"🦙 Ollama",api:"☁️ 云端 API"};
+  $("recModeLabel").textContent="模式："+(labels[mode]||mode);
+}
+function setRecognizingUI(on){
+  // on=true 识别中：启用停止按钮；on=false 结束：禁用
+  const btn=$("stopRecBtn");
+  if(btn) btn.disabled=!on;
+}
+async function runRecognition(){
+  const ids=files.filter(f=>f.checked&&!f._is_folder).map(f=>f.id);
+  if(!ids.length){ toast("请先加载并勾选要识别的文件"); return; }
+  const bar=$("recBar");
+  bar.style.width="0%";
+  const cfg=collectAiConfig();
+  const mode=cfg.recognition_mode;
+  if(mode==="api"&&!cfg.api_key){ toast("请先填写 API Key（云端模式）"); return; }
+  if(mode==="ollama"&&!cfg.ollama_model){ toast("请先检测并选择 Ollama 模型"); return; }
+  // 多标签设置进入配置
+  if($("useMultiTags")&&$("useMultiTags").checked){
+    cfg.use_multiple_tags=true;
+    cfg.tag_separator=$("tagSeparator").value||"_";
+    cfg.max_tag_count=parseInt($("maxTagCount").value||"3",10);
+  }
+  setRecMode(mode);
+  setRecognizingUI(true);
+  $("recModeLabel").textContent="模式："+mode+" · 识别中…";
+  let p=0; const t=setInterval(()=>{ p=Math.min(p+3,88); bar.style.width=p+"%"; },40);
+  try{
+    const d=await api("/recognize","POST",{ids,config:cfg});
+    const r=d.results||{};
+    files.forEach(f=>{
+      if(r[f.id]){
+        f.cat=r[f.id].category;
+        f.tags=r[f.id].tags||[];
+        // 多标签：合并为文件名标签后缀（用分隔符连接）
+        if((r[f.id].tags||[]).length>1&&cfg.use_multiple_tags){
+          f.tagsText=r[f.id].tags.slice(0,cfg.max_tag_count).join(cfg.tag_separator);
+        }
+      }
+    });
+    refreshCatFilter();   // 识别后分类下拉与分类列保持一致
+    renderTable(); updateStatGrid();
+    clearInterval(t); bar.style.width="100%";
+    setRecognizingUI(false);
+    $("recModeLabel").textContent="模式："+(d.mode||mode)+" · 完成";
+    const stopped=window._stopRequested;
+    window._stopRequested=false;
+    const msg=stopped?`识别已停止：已完成 ${Object.keys(r).length} 个文件`:`识别完成：${Object.keys(r).length} 个文件已分类`;
+    toast(d.note?msg+"（"+d.note+"）":msg);
+    // 自动应用分类到命名
+    if(d.note) console.log(d.note);
+    // 识别后自动导出结果
+    if($("autoExport")&&$("autoExport").checked&&!stopped){
+      await exportRecognition();
+    }
+    // 按分类筛选结果
+    if($("filterByCategory")&&$("filterByCategory").checked){
+      window._filterByCat=true;
+      const sel=$("catFilter");
+      if(sel&&sel.options.length>1) sel.selectedIndex=1;
+      renderTable();
+    }
+  }catch(e){
+    clearInterval(t); bar.style.width="0%";
+    setRecognizingUI(false);
+    $("recModeLabel").textContent="识别失败";
+    toast("识别失败："+e.message);
+  }
+}
+async function exportRecognition(){
+  const fmt=$("recExportFmt")?$("recExportFmt").value:"json";
+  try{
+    const resp=await fetch("/api/recognize/export",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({format:fmt})});
+    if(!resp.ok){ const d=await resp.json(); throw new Error(d.error||"导出失败"); }
+    const blob=await resp.blob();
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download=`识别结果.${fmt}`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast(`已导出识别结果（${fmt}）`);
+  }catch(e){ toast(e.message); }
+}
+function onTagSettingsChange(){
+  const on=$("useMultiTags").checked;
+  $("tagSepRow").style.display=on?"flex":"none";
+}
+function onFilterSettingChange(){
+  const on=$("filterByCategory").checked;
+  $("filterModeRow").style.display=on?"flex":"none";
+  window._filterByCat=on?true:false;
+  if(on&&$("catFilter")&&$("catFilter").options.length>1){
+    $("catFilter").selectedIndex=1;
+  }
+  renderTable();
+}
+function onExportSettingChange(){
+  const on=$("autoExport").checked;
+  $("exportFmtRow").style.display=on?"flex":"none";
+}
+async function stopRecognition(){
+  try{
+    const d=await api("/recognize/stop","POST",{});
+    window._stopRequested=true;
+    setRecognizingUI(false);
+    $("recModeLabel").textContent="正在停止识别…";
+    $("recBar").style.width="0%";
+    toast("已请求停止识别，正在处理中…");
+  }catch(e){ toast("停止失败："+e.message); }
+}
+async function clearRecognition(){
+  // 清除所有文件的识别分类结果，恢复扩展名规则分类
+  files.forEach(f=>{ f.tags=[]; f.cat=guessCatByExt(f.ext); });
+  refreshCatFilter(); renderTable(); updateStatGrid();
+  toast("已清除识别结果，恢复扩展名分类");
+}
+function guessCatByExt(ext){
+  const map={"图片":[".jpg",".jpeg",".png",".bmp",".webp",".gif",".tiff"],
+    "文档":[".doc",".docx",".pdf",".txt",".md",".xlsx",".xls",".pptx",".csv",".html",".htm"],
+    "压缩包":[".zip",".rar",".7z",".tar",".gz",".bz2",".xz",".iso"],
+    "视频":[".mp4",".avi",".mkv",".mov",".wmv",".flv",".webm",".m4v"],
+    "音频":[".mp3",".wav",".flac",".aac",".ogg",".m4a",".wma"]};
+  for(const [cat,exts] of Object.entries(map)){
+    if(exts.includes((ext||"").toLowerCase())) return cat;
+  }
+  return "其他";
+}
+function applyRecognitionToPreview(){
+  if(!files.length){ toast("请先加载文件"); return; }
+  $("useCategory").checked=true;
+  livePreview();
+  generatePreview();
+}
+function updateStatGrid(){
+  // 动态统计所有出现过的分类，保证与实际数据一致
+  const grid=$("statGrid");
+  if(!grid) return;
+  const counts={};
+  files.forEach(f=>{ const c=f.cat||"其他"; counts[c]=(counts[c]||0)+1; });
+  const entries=Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+  const colors=["var(--info)","var(--ok)","var(--warn)","var(--err)","var(--accent-2)","var(--text-2)","var(--text-3)"];
+  grid.innerHTML=entries.map(([c,n],i)=>
+    `<div class="stat-cell"><div class="num" style="color:${colors[i%colors.length]}">${n}</div><div class="lbl">${esc(c)}</div></div>`
+  ).join("")||'<div class="stat-cell"><div class="num" style="color:var(--text-3)">0</div><div class="lbl">—</div></div>';
+}
+
+/* ================= AI 内容命名 ================= */
+function setAiContentMode(mode){
+  window._aiContentMode=mode;
+  document.querySelectorAll("#aiContentModeGroup .chip").forEach(c=>c.classList.toggle("active",c.dataset.aiMode===mode));
+  const isLocal=mode==="本地Ollama";
+  $("aiContentLocalCfg").style.display=isLocal?"":"none";
+  $("aiContentApiCfg").style.display=isLocal?"none":"";
+}
+async function startAiNaming(){
+  const ids=files.filter(f=>f.checked&&!f._is_folder).map(f=>f.id);
+  if(!ids.length){ toast("请先加载并勾选文件"); return; }
+  const cfg=collectAiConfig();
+  if(cfg.ai_content_mode==="云端API"&&!cfg.api_key){ toast("云端模式需要先填写 API Key（本页上方）"); return; }
+  if(cfg.ai_content_mode==="本地Ollama"&&!cfg.local_model){ toast("本地模式需要先选择模型"); return; }
+  setBar("AI 正在生成文件名…",8);
+  try{
+    const d=await api("/ai/naming","POST",{ids,config:cfg});
+    const r=d.results||{};
+    let ok=0;
+    files.forEach(f=>{
+      const v=r[f.id];
+      if(v&&!String(v).startsWith("__ERR__")){ f.new=v; f.status="待处理"; f.scheme=$("selScheme")?$("selScheme").value:null; f.tag="pending"; ok++; }
+    });
+    renderTable();
+    setBar(`AI 命名完成：${ok} 个文件`,100);
+    toast(`已为 ${ok} 个文件生成新文件名`);
+  }catch(e){
+    setBar("AI 命名失败",0);
+    toast("AI 命名失败："+e.message);
+  }
+}
+
+/* ================= 方案管理 ================= */
+let schemes=[];
+async function loadSchemes(){
+  try{
+    const d=await api("/schemes");
+    schemes=d.schemes||[];
+    const sel=$("selScheme");
+    sel.innerHTML="";
+    (schemes.length?schemes:[{name:"默认方案",data:{}}]).forEach(s=>{
+      const opt=document.createElement("option");
+      opt.value=s.name; opt.textContent=s.name;
+      sel.appendChild(opt);
+    });
+    if(schemes.length) sel.value=schemes[0].name;
+  }catch(e){ toast("加载方案失败："+e.message); }
+}
+function onSchemeSelect(){
+  const name=$("selScheme").value;
+  const s=schemes.find(x=>x.name===name);
+  if(!s||!s.data) return;
+  applySchemeToUI(s.data);
+}
+function applySchemeToUI(d){
+  $("inPrefix").value=d.prefix||"文件";
+  $("inStart").value=d.start_num!=null?d.start_num:1;
+  $("inPad").value=d.pad_width!=null?d.pad_width:2;
+  $("inSuffix").value=d.suffix||"";
+  $("inMode").value={prefix_num:"pn",num_prefix:"np",prefix_num_suffix:"pns"}[d.mode]||"pn";
+  $("regexFind").value=d.regex_find||"";
+  $("regexReplace").value=d.regex_replace||"";
+  $("addText").value=d.add_text||"";
+  $("findText").value=d.find_text||"";
+  $("replaceText").value=d.replace_text||"";
+  livePreview();
+}
+async function saveCurrentScheme(){
+  const name=$("schemeName").value.trim();
+  if(!name){ toast("请输入方案名称"); return; }
+  try{
+    await api("/schemes/save","POST",{name,data:getScheme()});
+    $("schemeName").value="";
+    await loadSchemes();
+    toast("方案已保存："+name);
+  }catch(e){ toast(e.message); }
+}
+async function deleteCurrentScheme(){
+  const name=$("selScheme").value;
+  if(!name||name==="默认方案"){ toast("默认方案不可删除"); return; }
+  try{
+    await api("/schemes/delete","POST",{name});
+    await loadSchemes();
+    toast("已删除方案："+name);
+  }catch(e){ toast(e.message); }
+}
+function insertMetaChip(ph){
+  // 在光标处插入元数据占位符到前缀输入框
+  const el=$("inPrefix");
+  const start=el.selectionStart||el.value.length, end=el.selectionEnd||el.value.length;
+  el.value=el.value.slice(0,start)+ph+el.value.slice(end);
+  el.focus();
+  el.setSelectionRange(start+ph.length,start+ph.length);
+  livePreview();
+  toast("已插入占位符："+ph);
+}
+function applySchemeToChecked(){
+  // 把当前方案数据应用到勾选文件（记录方案来源）
+  const name=$("selScheme").value;
+  if(!name){ toast("请先选择方案"); return; }
+  const n=files.filter(f=>f.checked).length;
+  if(!n){ toast("请先勾选文件"); return; }
+  files.forEach(f=>{ if(f.checked) f.scheme=name; });
+  renderTable();
+  toast(`已将「${name}」应用到 ${n} 个勾选文件`);
+  livePreview();
+}
+function setAllScheme(){
+  const name=$("selScheme").value;
+  if(!name){ toast("请先选择方案"); return; }
+  files.forEach(f=>{ f.scheme=name; });
+  renderTable();
+  toast(`已将所有文件设为「${name}」`);
+  livePreview();
+}
+async function importExcelFile(input){
+  const file=input.files&&input.files[0];
+  if(!file){ return; }
+  const ext=file.name.split(".").pop().toLowerCase();
+  if(!["xlsx","xls","csv"].includes(ext)){ toast("仅支持 .xlsx / .xls / .csv 文件"); input.value=""; return; }
+  try{
+    // 读取为 base64 发送给后端解析
+    const buf=await file.arrayBuffer();
+    const bytes=new Uint8Array(buf);
+    let binary="";
+    const CHUNK=0x8000;
+    for(let i=0;i<bytes.length;i+=CHUNK){
+      binary+=String.fromCharCode.apply(null,bytes.subarray(i,i+CHUNK));
+    }
+    const b64=btoa(binary);
+    const d=await api("/excel/import","POST",{file:b64});
+    const mappings=d.mappings||[];
+    if(!mappings.length){ toast("Excel 中未找到有效的「原文件名→新文件名」映射"); input.value=""; return; }
+    let applied=0,notFound=0;
+    mappings.forEach(m=>{
+      const f=files.find(x=>x.old===m.old);
+      if(f){ f.new=m.new; f.status="待处理"; f.scheme="Excel 导入"; applied++; }
+      else notFound++;
+    });
+    renderTable();
+    toast(`Excel 导入成功：应用 ${applied} 条${notFound?`，${notFound} 条未匹配`:""}`);
+  }catch(e){ toast("导入失败："+e.message); }
+  input.value="";
+}
+
+/* ================= 模板 ================= */
+async function loadTemplates(){
+  try{
+    const d=await api("/templates");
+    const grid=$("tplGrid");
+    if(!d.templates.length){
+      grid.innerHTML='<div style="color:var(--text-3);font-size:12px;padding:8px">暂无模板，设置好规则后点击「保存模板」创建</div>';
+      return;
+    }
+    grid.innerHTML=d.templates.map(t=>{
+      const s=t.data||{};
+      const parts=[s.prefix,`${s.pad_width||2}位编号`,s.suffix].filter(Boolean);
+      const desc=parts.join("_")+" 等规则";
+      return `<div class="tpl-card" onclick="applyTemplate('${esc(t.name)}')">
+        <div class="t-name"><span>${esc(t.name)}</span>
+          <span style="font-size:10px;color:var(--text-3);cursor:pointer" onclick="event.stopPropagation();deleteTemplate('${esc(t.name)}')">✕ 删除</span></div>
+        <div class="t-desc">${esc(desc)}</div>
+      </div>`;
+    }).join("");
+  }catch(e){ toast("加载模板失败："+e.message); }
+}
+function applyTemplate(name){
+  api("/templates").then(d=>{
+    const t=(d.templates||[]).find(x=>x.name===name);
+    if(!t||!t.data) return;
+    const s=t.data;
+    $("inPrefix").value=s.prefix||"文件";
+    $("inStart").value=s.start_num!=null?s.start_num:1;
+    $("inPad").value=s.pad_width!=null?s.pad_width:2;
+    $("inSuffix").value=s.suffix||"";
+    $("inMode").value={prefix_num:"pn",num_prefix:"np",prefix_num_suffix:"pns"}[s.mode]||"pn";
+    $("regexFind").value=s.regex_find||"";
+    $("regexReplace").value=s.regex_replace||"";
+    toast("已加载模板："+name);
+    livePreview();
+  });
+}
+async function saveTemplate(){
+  const name=$("tplName").value.trim();
+  if(!name){ toast("请输入模板名称"); return; }
+  try{
+    await api("/templates/save","POST",{name,data:getScheme()});
+    $("tplName").value="";
+    loadTemplates();
+    toast("模板已保存："+name);
+  }catch(e){ toast(e.message); }
+}
+async function deleteTemplate(name){
+  try{
+    await api("/templates/delete","POST",{name});
+    loadTemplates();
+    toast("已删除模板："+name);
+  }catch(e){ toast(e.message); }
+}
+
+/* ================= Excel 导出 ================= */
+async function exportExcel(){
+  const rows=files.map(f=>({old:f.old,new:f.new||"",status:f.status||"",cat:f.cat||"",folder:f.folder||""}));
+  if(!rows.length){ toast("没有可导出的文件"); return; }
+  try{
+    const resp=await fetch("/api/export/excel",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({filename:"重命名清单.xlsx",rows})});
+    if(!resp.ok){ const d=await resp.json(); throw new Error(d.error||"导出失败"); }
+    const blob=await resp.blob();
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download="重命名清单.xlsx";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast("已导出 Excel");
+  }catch(e){ toast(e.message); }
+}
+
+/* ================= 模态框 ================= */
+function openModal(id){
+  const el=document.getElementById(id);
+  if(!el) return;
+  el.classList.add("open");
+  if(id==="logModal") refreshLogs();
+  document.body.style.overflow="hidden";
+}
+function closeModal(id){
+  const el=document.getElementById(id);
+  if(!el) return;
+  el.classList.remove("open");
+  document.body.style.overflow="";
+}
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"){
+    document.querySelectorAll(".modal-overlay.open").forEach(m=>closeModal(m.id));
+  }
+});
+document.querySelectorAll(".modal-overlay").forEach(ov=>{
+  ov.addEventListener("mousedown",e=>{
+    if(e.target===ov) closeModal(ov.id);
+  });
+});
+
+/* ================= 操作日志 ================= */
+async function refreshLogs(){
+  const list=$("logList");
+  if(!list) return;
+  try{
+    const d=await api("/logs");
+    const logs=d.logs||[];
+    $("logCount").textContent=logs.length+" 条";
+    if(!logs.length){
+      list.innerHTML='<div class="log-empty">暂无操作日志，开始使用后会自动记录 📝</div>';
+      return;
+    }
+    const lvMap={info:["lv-info","信息"],success:["lv-success","成功"],warning:["lv-warning","警告"],error:["lv-error","错误"]};
+    list.innerHTML=[...logs].reverse().map(l=>{
+      const [cls,txt]=lvMap[l.level]||["lv-info",l.level||"信息"];
+      return `<div class="log-item">
+        <span class="lt">${esc(l.time||"")}</span>
+        <span class="lv ${cls}">${txt}</span>
+        <span class="lm">${esc(l.msg||"")}</span>
+      </div>`;
+    }).join("");
+  }catch(e){
+    list.innerHTML=`<div class="log-empty">加载日志失败：${esc(e.message)}</div>`;
+  }
+}
+async function clearLogs(){
+  try{
+    await api("/logs/clear","POST",{});
+    toast("日志已清空");
+    refreshLogs();
+  }catch(e){ toast("清空失败："+e.message); }
+}
+
+/* ================= Toast ================= */
+function toast(msg){
+  const box=$("toastBox");
+  const el=document.createElement("div");
+  el.style.cssText="padding:10px 16px;border-radius:10px;background:rgba(20,26,33,.95);border:1px solid var(--border-2);box-shadow:var(--shadow-2);font-size:13px;animation:tabIn .25s ease;backdrop-filter:blur(8px)";
+  el.textContent=msg;
+  box.appendChild(el);
+  setTimeout(()=>{ el.style.opacity="0"; el.style.transition="opacity .3s"; setTimeout(()=>el.remove(),320); },2600);
+}
+
+/* ================= 预览区拖拽调整 ================= */
+function setupPreviewResize(){
+  const handle=$("previewHandle");
+  const preview=document.querySelector(".preview");
+  const right=document.querySelector(".right-col");
+  if(!handle||!preview||!right) return;
+  handle.addEventListener("mousedown",e=>{
+    e.preventDefault();
+    handle.classList.add("dragging");
+    document.body.style.userSelect="none";
+    document.body.style.cursor="ns-resize";
+    const startY=e.clientY;
+    const startH=preview.getBoundingClientRect().height;
+    const onMove=ev=>{
+      const h=startH+(startY-ev.clientY);
+      // 留出右侧列顶部的标签/规则区最小空间（约 160px）
+      const maxH=Math.max(140,right.clientHeight-160);
+      preview.style.flexBasis=Math.max(140,Math.min(h,maxH))+"px";
+    };
+    const onUp=()=>{
+      handle.classList.remove("dragging");
+      document.body.style.userSelect="";
+      document.body.style.cursor="";
+      document.removeEventListener("mousemove",onMove);
+      document.removeEventListener("mouseup",onUp);
+    };
+    document.addEventListener("mousemove",onMove);
+    document.addEventListener("mouseup",onUp);
+  });
+}
+
+/* ================= 初始化 ================= */
+async function init(){
+  // 加载服务商列表
+  try{
+    const d=await api("/providers");
+    window._providers=d.providers||{};
+  }catch(e){ window._providers={}; }
+  // 绑定识别模式切换
+  document.querySelectorAll("#recModeGroup .chip").forEach(c=>{
+    c.addEventListener("click",()=>setRecMode(c.dataset.rec));
+  });
+  // 绑定 AI 内容模式切换
+  document.querySelectorAll("#aiContentModeGroup .chip").forEach(c=>{
+    c.addEventListener("click",()=>setAiContentMode(c.dataset.aiMode));
+  });
+  setupPreviewResize();
+  refreshFolders(); renderTable(); loadTemplates(); livePreview();
+  loadSchemes(); loadAiConfig();
+}
+init();
+document.addEventListener("keydown",e=>{
+  if(e.ctrlKey&&e.key==="o"){ e.preventDefault(); pickFolder(); }
+  if(e.ctrlKey&&e.key==="r"){ e.preventDefault(); startRename(); }
+  if(e.ctrlKey&&e.key==="z"){ e.preventDefault(); undoRename(); }
+});
+</script>
+</body>
+</html>

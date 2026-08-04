@@ -1,0 +1,6 @@
+# 可选依赖：本地 CLIP 图片识别（语义分类）
+# 体积较大（torch 约 2GB+），不需要时可忽略。
+# 安装：pip install -r requirements-clip.txt
+# 不安装时，CLIP 模式会自动降级为规则分类。
+torch>=2.0.0
+open_clip_torch>=2.23.0
