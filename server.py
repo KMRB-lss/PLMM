@@ -1669,11 +1669,30 @@ def main():
     print(f"  数据目录: {DATA_DIR}")
     print("  按 Ctrl+C 停止服务")
     print("=" * 56)
+    # 启动成功后自动打开浏览器（若本机有 GUI 环境）
+    _auto_open_browser(port)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\n服务已停止")
         server.shutdown()
+
+
+def _auto_open_browser(port, delay=1.2):
+    """服务启动后延迟自动打开默认浏览器（后台线程，失败静默）"""
+    def _open():
+        import time as _t
+        _t.sleep(delay)
+        try:
+            import webbrowser
+            webbrowser.open(f"http://localhost:{port}")
+        except Exception:
+            pass
+    try:
+        import threading
+        threading.Thread(target=_open, daemon=True).start()
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

@@ -51,7 +51,7 @@ pip install -r requirements-clip.txt
 
 ### 启动
 
-**方式一（推荐）**：双击 **`启动Web版.bat`**
+**方式一（推荐）**：双击 **`启动Web版.bat`** —— 服务启动后**自动打开浏览器**界面
 
 **方式二**：命令行启动
 ```bash
@@ -62,6 +62,12 @@ python server.py 8890
 ```bash
 python server.py 9000
 ```
+
+### 本地 CLIP 模型包
+
+本地 CLIP 图片识别需要模型包 `resources/model_pack/`（约 750MB，体积大不入 Git）。
+请从项目的 **Release 页面** 下载 `model_pack.zip`，解压到项目根目录，得到 `resources/model_pack/` 即可。
+不使用本地 CLIP 时无需下载，识别模式自动降级为规则分类。
 
 ### 使用
 

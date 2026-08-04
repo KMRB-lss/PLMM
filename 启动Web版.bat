@@ -27,7 +27,7 @@ if not defined PYTHON (
 )
 
 echo 使用 Python: %PYTHON%
-echo 启动后浏览器访问: http://localhost:8890
+echo 服务启动后自动打开浏览器: http://localhost:8890
 echo 按 Ctrl+C 停止服务
 echo.
 
