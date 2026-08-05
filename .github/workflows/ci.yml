@@ -19,5 +19,5 @@ jobs:
           python -m py_compile server.py
       - name: 依赖检查
         run: |
-          pip install --no-cache-dir openpyxl
-          python -c "import openpyxl; print('openpyxl OK')"
+          pip install --no-cache-dir -r requirements.txt
+          python -c "import openpyxl, PIL, docx, pptx, fitz, pdfminer; print('核心依赖 OK')"

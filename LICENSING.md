@@ -13,6 +13,12 @@ GPL-3.0 是 copyleft（传染性）许可证：允许商用、分发、修改，
 | Pillow | MIT-CMU | 图片处理 |
 | openpyxl | MIT | Excel 导入/导出 |
 | tqdm | MPL-2.0 / MIT 双许可 | 进度条 |
+| python-docx | MIT | 读取 .docx 文档内容（AI 内容命名） |
+| python-pptx | MIT | 读取 .pptx 演示文稿内容（AI 内容命名） |
+| pymupdf | **AGPL-3.0**（或商业许可） | 读取 .pdf 文本（优先尝试，失败自动回退 pdfminer.six） |
+| pdfminer.six | MIT | 读取 .pdf 文本（兜底） |
+
+> **关于 PyMuPDF（AGPL-3.0）**：PyMuPDF 采用 AGPL-3.0 或商业双许可。AGPL 与 GPL-3.0 同为 copyleft，但含网络交互条款。本项目中 PyMuPDF 为可选增强组件（代码在 `try/except` 中导入，缺失时自动回退 pdfminer.six），仅用于本地读取 PDF 文本；本地使用不受影响。若需将本项目对外分发为服务，可在构建时排除 PyMuPDF（`pip install pdfminer.six` 即可，不装 pymupdf），PDF 文本提取仍可用。
 
 ## 可选依赖（requirements-clip.txt，本地 CLIP）
 
@@ -58,6 +64,8 @@ GPL-3.0 是 copyleft（传染性）许可证：允许商用、分发、修改，
 | pip / setuptools | MIT |
 
 **以上全部为宽松许可证（MIT / BSD / Apache-2.0 / MPL-2.0 / ISC / PSF）。其中 MIT / BSD / Apache-2.0 与 GPL-3.0 兼容，可自由并入 GPL 项目；MPL-2.0 与 GPL-3.0 兼容（MPL-2.0 官方提供 GPL 兼容条款）。因此将本项目以 GPL-3.0 授权**完全合规**，无需替换任何第三方依赖。**
+
+> PyMuPDF 例外说明见上方主要依赖表格：其为 AGPL-3.0 双许可的可选增强组件，本地使用不受影响；对外分发服务时可排除（PDF 提取自动回退 pdfminer.six）。
 
 ## 资源目录
 

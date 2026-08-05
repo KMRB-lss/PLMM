@@ -3,12 +3,14 @@
 请遵循以下规范，让协作更顺畅：
 
 ## 开发环境
-- Python 3.8+（建议 3.11）
+- Python 3.9+（建议 3.11）
 - 前端为单文件 `webui.html`，无需构建步骤
 - 后端为单文件 `server.py`，使用 Python 标准库 `http.server`
+- 依赖安装：`pip install -r requirements.txt`（含 Excel、图片处理、文档解析库）
 
 ## 本地启动
 ```bash
+pip install -r requirements.txt
 python server.py 8890
 # 浏览器打开 http://localhost:8890
 ```
