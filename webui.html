@@ -204,6 +204,7 @@ body{
 .sidebar .card{display:flex;flex-direction:column;min-height:0}
 .folder-actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;padding:0 16px 8px}
 .folder-options{display:flex;gap:14px;padding:0 16px 10px;border-bottom:1px dashed var(--border)}
+.folder-hint{font-size:11px;color:var(--text-3);padding:0 16px 8px;line-height:1.5}
 .folder-list{flex:1;min-height:0;overflow:auto;padding:8px;display:flex;flex-direction:column;gap:4px}
 .folder-item{
   display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:var(--r-sm);
@@ -517,17 +518,23 @@ td .diff{color:var(--warn)}
           <button class="btn sm" onclick="removeFolder()">✕ 删除</button>
           <button class="btn sm" onclick="clearFolders()">🗑 清空</button>
         </div>
-        <div class="row" style="padding:0 16px 8px">
+        <div class="row" style="padding:0 16px 8px;align-items:center;flex-wrap:wrap">
           <input class="input" style="flex:1" id="manualPath" placeholder="或手动输入路径…" onkeydown="if(event.key==='Enter')addManualFolder()">
           <button class="btn sm" onclick="addManualFolder()">＋</button>
         </div>
+        <div class="row" style="padding:0 16px 8px">
+          <button class="btn primary" style="flex:1" onclick="loadFiles()">⟳ 加载选中文件夹</button>
+          <button class="btn sm" onclick="loadFiles(true)" title="加载列表中的全部文件夹">全部</button>
+        </div>
+        <div class="folder-hint">点击文件夹可切换选中，双击或回车立即加载该文件夹</div>
         <div class="folder-options">
           <label class="check"><input type="checkbox" id="optRecursive" checked> 递归子目录</label>
           <label class="check"><input type="checkbox" id="optOnlyFolder"> 仅文件夹</label>
         </div>
         <div class="folder-list" id="folderList"></div>
         <div class="folder-foot">
-          <button class="btn primary" onclick="loadFiles()">⟳ 加载文件列表</button>
+          <button class="btn primary" onclick="loadFiles()">⟳ 加载选中文件夹</button>
+          <button class="btn" onclick="loadFiles(true)">加载全部</button>
           <button class="btn" onclick="refreshFolders()">⟲ 刷新</button>
           <button class="btn" onclick="document.getElementById('excelFile').click()">📊 从 Excel 导入</button>
           <input type="file" id="excelFile" accept=".xlsx,.xls,.csv" style="display:none" onchange="importExcelFile(this)">
@@ -1155,7 +1162,7 @@ td .diff{color:var(--warn)}
         <h4>🚀 快速开始（四步完成批量重命名）</h4>
         <div class="help-steps">
           <div class="help-step"><span class="hs-n">1</span><span class="hs-t"><b>添加文件夹</b>：点击左侧「📂 浏览」选择目标文件夹，或直接手动输入路径后回车；支持多个文件夹，可勾选「递归子目录」</span></div>
-          <div class="help-step"><span class="hs-n">2</span><span class="hs-t"><b>加载文件列表</b>：点击「⟳ 加载文件列表」，下方预览区显示全部文件；可通过搜索、扩展名、分类筛选，或点击列头排序</span></div>
+          <div class="help-step"><span class="hs-n">2</span><span class="hs-t"><b>加载文件列表</b>：点击「⟳ 加载选中文件夹」（只加载当前高亮的文件夹，点击列表中的文件夹可切换选中，双击或回车立即加载）；需要加载全部文件夹时点「加载全部」</span></div>
           <div class="help-step"><span class="hs-n">3</span><span class="hs-t"><b>设置命名规则并生成预览</b>：在「基本功能」设置前缀/编号等规则，点击「👁 生成预览」核对新文件名；确认无误后再操作</span></div>
           <div class="help-step"><span class="hs-n">4</span><span class="hs-t"><b>开始重命名</b>：点击「▶ 开始重命名」执行真实磁盘操作；出错可点「↩ 撤销」一键恢复</span></div>
         </div>
@@ -1338,11 +1345,17 @@ function renderFolders(){
     return;
   }
   el.innerHTML=folders.map((f,i)=>
-    `<div class="folder-item ${i===selFolderIdx?"active":""}" onclick="selectFolder(this,${i})">
+    `<div class="folder-item ${i===selFolderIdx?"active":""}" onclick="selectFolder(this,${i})" ondblclick="loadSelectedFolder()" onkeydown="if(event.key==='Enter')loadSelectedFolder()" tabindex="0">
        <span class="f-ic">📁</span><span class="f-name" title="${esc(f)}">${esc(f)}</span>
      </div>`).join("");
 }
 function selectFolder(el,i){ selFolderIdx=i; renderFolders(); }
+function loadSelectedFolder(){
+  // 只加载当前选中的文件夹
+  if(!folders.length){ toast("请先添加文件夹"); return; }
+  if(selFolderIdx<0||selFolderIdx>=folders.length) selFolderIdx=0;
+  loadFiles();
+}
 async function refreshFolders(){
   try{
     const d=await api("/folders");
@@ -1384,17 +1397,25 @@ async function clearFolders(){
   renderFolders(); renderTable();
   toast("已清空文件夹列表");
 }
-async function loadFiles(){
+async function loadFiles(all){
   if(!folders.length){ toast("请先添加文件夹"); return; }
+  let target;
+  if(all){
+    target=[...folders];
+  }else{
+    // 只加载当前选中的文件夹（修正：此前误把全部文件夹都发给后端）
+    if(selFolderIdx<0||selFolderIdx>=folders.length) selFolderIdx=0;
+    target=[folders[selFolderIdx]];
+  }
   try{
     const d=await api("/files/load","POST",{
-      folders, recursive:$("optRecursive").checked,
+      folders:target, recursive:$("optRecursive").checked,
       only_folders:$("optOnlyFolder").checked, filter_system:true,
     });
     files=(d.files||[]).map(f=>({...f,checked:true,new:"",status:"待处理",tag:"pending"}));
     refreshCatFilter();
     renderTable(); updateStatGrid();
-    toast(`已加载 ${files.length} 个文件/文件夹`);
+    toast(`已加载 ${files.length} 个文件/文件夹${all?"（全部文件夹）":"（"+target[0]+"）"}`);
   }catch(e){ toast("加载失败："+e.message); }
 }
 
