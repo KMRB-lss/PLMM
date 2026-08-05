@@ -814,6 +814,7 @@ td .diff{color:var(--warn)}
               <button class="btn primary" onclick="runRecognition()">▶ 开始识别图片内容</button>
               <button class="btn" id="stopRecBtn" onclick="stopRecognition()" disabled>⏹ 停止识别</button>
               <button class="btn" onclick="clearRecognition()">🗑 清除识别结果</button>
+              <button class="btn" onclick="applyRecognitionAsFilename()">🎯 识别结果作为文件名</button>
               <button class="btn" onclick="applyRecognitionToPreview()">🖼 按分类生成预览</button>
               <select class="select" style="width:76px" id="recExportFmt">
                 <option value="json">json</option><option value="csv">csv</option><option value="txt">txt</option>
@@ -1291,9 +1292,13 @@ let renaming=false;
 
 function getScheme(){
   const m={pn:"prefix_num",np:"num_prefix",pns:"prefix_num_suffix"}[$("inMode").value]||"prefix_num";
+  const prefix=$("inPrefix").value, suffix=$("inSuffix").value;
   const s={
-    prefix:$("inPrefix").value, start_num:parseInt($("inStart").value||"1",10),
-    pad_width:parseInt($("inPad").value||"2",10), suffix:$("inSuffix").value, mode:m,
+    prefix:prefix, start_num:parseInt($("inStart").value||"1",10),
+    pad_width:parseInt($("inPad").value||"2",10), suffix:suffix, mode:m,
+    // 命名规则是否显式配置：前缀/后缀/非默认模式任一非空即视为启用；
+    // 未配置时「添加&替换/正则替换」以原文件名为基础独立生效（与命名规则组合）
+    rules_enabled:!!(prefix.trim()||suffix.trim()||m!=="prefix_num"),
     add_text:$("addText").value,
     add_position:document.querySelector('input[name="addPos"]:checked').value,
     find_text:$("findText").value, replace_text:$("replaceText").value,
@@ -1406,9 +1411,13 @@ function livePreview(){
   clearTimeout(liveTimer);
   liveTimer=setTimeout(()=>{
     const el=$("rulePreview");
-    if(!$("inPrefix").value){ el.innerHTML='<span style="color:var(--text-3)">输入前缀后实时预览…</span>'; return; }
-    const samples=[0,1,2].map(i=>buildName(i)).map(n=>`<span class="sample">${esc(n)}</span>`);
-    el.innerHTML=`<span>示例</span><span class="arrow">→</span> ${samples.join(" &nbsp;")}`;
+    if(!$("inPrefix").value){
+      // 命名规则未配置：提示可由「添加&替换/正则」独立生效
+      el.innerHTML='<span style="color:var(--text-3)">命名规则未设置（将保留原文件名，仅应用「添加&替换/正则」）…</span>';
+    }else{
+      const samples=[0,1,2].map(i=>buildName(i)).map(n=>`<span class="sample">${esc(n)}</span>`);
+      el.innerHTML=`<span>示例</span><span class="arrow">→</span> ${samples.join(" &nbsp;")}`;
+    }
     if(files.length){
       // 实时预览所有勾选文件（而非仅前 3 个），保证「新文件名」列与实际一致
       const ids=files.filter(f=>f.checked).map(f=>f.id);
@@ -2091,6 +2100,24 @@ function applyRecognitionToPreview(){
   $("useCategory").checked=true;
   livePreview();
   generatePreview();
+}
+function applyRecognitionAsFilename(){
+  // 把识别结果（多标签 → 标签文本，单标签 → 分类）直接填入「新文件名」列，
+  // 与规则模式一样生成预览；与「按分类生成预览」相互独立。
+  if(!files.length){ toast("请先加载文件"); return; }
+  let ok=0, skip=0;
+  files.forEach(f=>{
+    if(!f.checked||f._is_folder) return;
+    const base=(f.tagsText||f.cat||"").trim();
+    if(!base){ skip++; return; }
+    f.new=base+(f.ext||"");
+    f.status="待处理";
+    f.scheme="AI 识别";
+    f.tag="pending";
+    ok++;
+  });
+  renderTable(); updateStatGrid();
+  toast(`已将 ${ok} 个文件的识别结果填入新文件名`+(skip?`（${skip} 个无识别结果跳过）`:""));
 }
 function updateStatGrid(){
   // 动态统计所有出现过的分类，保证与实际数据一致

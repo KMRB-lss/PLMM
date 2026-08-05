@@ -542,13 +542,10 @@ def compute_preview(ids, scheme):
         try:
             folder, old = info["folder"], info["old"]
             name, ext = os.path.splitext(old)
+
+            # 命名规则是否显式配置（前端 getScheme 传入 rules_enabled）
+            rules_on = bool(scheme.get("rules_enabled"))
             old_name = name
-            add_text = (scheme.get("add_text") or "").strip()
-            if add_text:
-                old_name = f"{add_text}_{old_name}" if scheme.get("add_position") == "前" else f"{old_name}_{add_text}"
-            find_text = (scheme.get("find_text") or "").strip()
-            if find_text and find_text in old_name:
-                old_name = old_name.replace(find_text, scheme.get("replace_text", ""))
 
             # 分类+编号模式：基于文件的 category 字段
             if scheme.get("use_category") and scheme.get("categories"):
@@ -567,11 +564,24 @@ def compute_preview(ids, scheme):
                 meta = read_file_metadata(os.path.join(folder, old))
                 new_base = build_new_name(scheme, scheme_indices[key], meta=meta)
                 scheme_indices[key] += 1
-            else:
+            # 命名规则已配置：前缀/编号生成新名
+            elif rules_on:
                 scheme_indices.setdefault("default", 0)
                 meta = read_file_metadata(os.path.join(folder, old))
                 new_base = build_new_name(scheme, scheme_indices["default"], meta=meta)
                 scheme_indices["default"] += 1
+            # 命名规则未配置：以原文件名为基础（此时「添加&替换/正则」独立生效）
+            else:
+                new_base = old_name
+
+            # 添加内容（前/后）：作用于基础名
+            add_text = (scheme.get("add_text") or "").strip()
+            if add_text:
+                new_base = f"{add_text}_{new_base}" if scheme.get("add_position") == "前" else f"{new_base}_{add_text}"
+            # 查找替换：作用于基础名
+            find_text = (scheme.get("find_text") or "").strip()
+            if find_text and find_text in new_base:
+                new_base = new_base.replace(find_text, scheme.get("replace_text", ""))
 
             new_base = apply_regex(new_base, scheme)
             new_base = sanitize_filename(new_base) or "文件"
@@ -1388,6 +1398,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _qr_path(self, filename):
+        """定位打赏二维码：兼容源码结构 resources/qr 与打包结构 qr（PyInstaller）"""
+        for base in (BASE_DIR, RES_DIR):
+            for p in (os.path.join(base, "resources", "qr", filename),
+                      os.path.join(base, "qr", filename)):
+                if os.path.exists(p):
+                    return p
+        return os.path.join(BASE_DIR, "resources", "qr", filename)
+
     # ---------- GET ----------
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -1396,9 +1415,9 @@ class Handler(BaseHTTPRequestHandler):
             if path in ("/", "/index.html", "/webui.html"):
                 self._send_file(os.path.join(BASE_DIR, "webui.html"), "text/html; charset=utf-8")
             elif path == "/qr/wechat.png":
-                self._send_file(os.path.join(BASE_DIR, "resources", "qr", "wechat.png"), "image/png")
+                self._send_file(self._qr_path("wechat.png"), "image/png")
             elif path == "/qr/alipay.png":
-                self._send_file(os.path.join(BASE_DIR, "resources", "qr", "alipay.png"), "image/png")
+                self._send_file(self._qr_path("alipay.png"), "image/png")
             elif path == "/api/health":
                 json_resp(self, {"status": "ok", "folders": len(STATE.folders), "files": len(STATE.files)})
             elif path == "/api/folders":
