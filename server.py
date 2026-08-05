@@ -365,14 +365,21 @@ def build_new_name(scheme, index, meta=None, force_numbering=False):
     return f"{prefix}_{padded}"
 
 
-def get_unique_path(folder, new_base, ext):
-    if not os.path.exists(os.path.join(folder, f"{new_base}{ext}")):
-        return f"{new_base}{ext}"
+def get_unique_path(folder, new_base, ext, old_name=None):
+    cand = f"{new_base}{ext}"
+    # 目标名与原文件名一致：允许同名（即文件自身），不算冲突，不追加 _1
+    if old_name and cand == old_name:
+        return cand
+    if not os.path.exists(os.path.join(folder, cand)):
+        return cand
     counter = 1
     while True:
-        cand = f"{new_base}_{counter}{ext}"
-        if not os.path.exists(os.path.join(folder, cand)):
-            return cand
+        cand2 = f"{new_base}_{counter}{ext}"
+        if old_name and cand2 == old_name:
+            counter += 1
+            continue
+        if not os.path.exists(os.path.join(folder, cand2)):
+            return cand2
         counter += 1
 
 
@@ -627,7 +634,8 @@ def compute_preview(ids, scheme):
 
             new_base = apply_regex(new_base, scheme)
             new_base = sanitize_filename(new_base) or "文件"
-            results[fid] = {"new": get_unique_path(folder, new_base, ext), "status": "待重命名"}
+            # old_name：目标名与原文件名一致时允许同名（自身不算冲突）
+            results[fid] = {"new": get_unique_path(folder, new_base, ext, old_name=old), "status": "待重命名"}
         except Exception as e:
             results[fid] = {"new": "", "status": f"错误: {e}"}
     return results
