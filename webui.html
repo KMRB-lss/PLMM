@@ -957,7 +957,7 @@ td .diff{color:var(--warn)}
       <table>
         <thead><tr>
           <th style="width:34px">✓<span class="col-resizer" data-col="0" title="拖动调整列宽"></span></th>
-          <th style="cursor:pointer" onclick="sortByColumn('old')">原文件名 → 新文件名 ↕<span class="col-resizer" data-col="1" title="拖动调整列宽"></span></th>
+          <th style="cursor:pointer" onclick="sortByColumn('old')" title="按原文件名排序">原文件名 → 新文件名 ↕<span class="col-resizer" data-col="1" title="拖动调整列宽"></span></th>
           <th>路径<span class="col-resizer" data-col="2" title="拖动调整列宽"></span></th>
           <th style="cursor:pointer" onclick="sortByColumn('cat')">分类 ↕<span class="col-resizer" data-col="3" title="拖动调整列宽"></span></th>
           <th>状态<span class="col-resizer" data-col="4" title="拖动调整列宽"></span></th>
@@ -1565,7 +1565,15 @@ function refreshCatFilter(){
   if([...entries.map(e=>e[0]),"全部"].includes(cur)) sel.value=cur;
   else sel.value="全部";
 }
-function onToolbarFilter(){ renderTable(); }
+function onToolbarFilter(){
+  // 排序/筛选时提示：选「新文件名」但还没生成预览时，退化为按原文件名排，避免误以为没生效
+  const sb=$("sortBy");
+  if(sb&&sb.value==="new"){
+    const hasNew=files.some(f=>f.new);
+    if(!hasNew) toast("尚未生成预览，暂按原文件名排序（请先点「👁 生成预览」）");
+  }
+  renderTable();
+}
 function updateCounts(visibleCount){
   const line=$("cntLine");
   if(!line) return;
