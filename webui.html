@@ -522,10 +522,6 @@ td .diff{color:var(--warn)}
           <input class="input" style="flex:1" id="manualPath" placeholder="或手动输入路径…" onkeydown="if(event.key==='Enter')addManualFolder()">
           <button class="btn sm" onclick="addManualFolder()">＋</button>
         </div>
-        <div class="row" style="padding:0 16px 8px">
-          <button class="btn primary" style="flex:1" onclick="loadFiles()">⟳ 加载选中文件夹</button>
-          <button class="btn sm" onclick="loadFiles(true)" title="加载列表中的全部文件夹">全部</button>
-        </div>
         <div class="folder-hint">点击文件夹可切换选中，双击或回车立即加载该文件夹</div>
         <div class="folder-options">
           <label class="check"><input type="checkbox" id="optRecursive" checked> 递归子目录</label>
