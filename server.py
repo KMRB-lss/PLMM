@@ -242,29 +242,39 @@ def read_file_metadata(filepath, orig_name=None):
     meta = {}
     try:
         st = os.stat(filepath)
+    except Exception:
+        return meta
+    # 逐字段容错：单个字段（如某些网络/共享盘上的创建时间）异常时，其余元数据仍可用
+    try:
         meta["创建日期"] = datetime.datetime.fromtimestamp(st.st_ctime).strftime("%Y-%m-%d")
-        meta["修改日期"] = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d")
-        size = st.st_size
-        if size < 1024:
-            meta["文件大小"] = f"{size} B"
-        elif size < 1048576:
-            meta["文件大小"] = f"{size // 1024} KB"
-        else:
-            meta["文件大小"] = f"{size / 1048576:.1f} MB"
-        ext_dot = os.path.splitext(filepath)[1].lower()
-        meta["文件扩展名"] = ext_dot.lstrip(".") if ext_dot else "(无)"
-        meta["文件扩展名-带点"] = ext_dot if ext_dot else "(无)"
-        # 原文件名：优先使用首次加载的原始文件名（重命名后 old 已变，但占位符应保持原始名）
-        base_name = os.path.basename(orig_name or filepath)
-        meta["原文件名"] = os.path.splitext(base_name)[0]
+    except Exception:
         try:
-            author, owner = _win_file_author(filepath)
-            if author:
-                meta["作者"] = author
-            if owner:
-                meta["所有者"] = owner
+            meta["创建日期"] = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d")
         except Exception:
-            pass
+            meta["创建日期"] = ""
+    try:
+        meta["修改日期"] = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d")
+    except Exception:
+        meta["修改日期"] = ""
+    size = st.st_size
+    if size < 1024:
+        meta["文件大小"] = f"{size} B"
+    elif size < 1048576:
+        meta["文件大小"] = f"{size // 1024} KB"
+    else:
+        meta["文件大小"] = f"{size / 1048576:.1f} MB"
+    ext_dot = os.path.splitext(filepath)[1].lower()
+    meta["文件扩展名"] = ext_dot.lstrip(".") if ext_dot else "(无)"
+    meta["文件扩展名-带点"] = ext_dot if ext_dot else "(无)"
+    # 原文件名：优先使用首次加载的原始文件名（重命名后 old 已变，但占位符应保持原始名）
+    base_name = os.path.basename(orig_name or filepath)
+    meta["原文件名"] = os.path.splitext(base_name)[0]
+    try:
+        author, owner = _win_file_author(filepath)
+        if author:
+            meta["作者"] = author
+        if owner:
+            meta["所有者"] = owner
     except Exception:
         pass
     return meta
@@ -790,6 +800,24 @@ def perform_rename(ids, scheme):
                         if not sf.get("_is_folder"):
                             sf["cat"] = guess_category(new)
                         break
+                # 文件夹改名：同步其下所有已加载条目的 folder，否则子文件的元数据（日期等）会因路径失效而读不到
+                if info.get("_is_folder") or os.path.isdir(old_path):
+                    old_p = os.path.normcase(old_path.rstrip("\\/"))
+                    prefix_old = old_p + os.sep
+                    for e in STATE.file_map.values():
+                        ef = e.get("folder")
+                        if not ef:
+                            continue
+                        ef_n = os.path.normcase(ef)
+                        if ef_n == old_p or ef_n.startswith(prefix_old):
+                            e["folder"] = os.path.join(new_path, ef[len(old_path):].lstrip("\\/")).rstrip("\\/")
+                    for sf in STATE.files:
+                        ef = sf.get("folder")
+                        if not ef:
+                            continue
+                        ef_n = os.path.normcase(ef)
+                        if ef_n == old_p or ef_n.startswith(prefix_old):
+                            sf["folder"] = os.path.join(new_path, ef[len(old_path):].lstrip("\\/")).rstrip("\\/")
         except PermissionError:
             stats["failed"] += 1
             results[fid] = {"status": "失败: 权限", "old": info["old"], "new": new}
