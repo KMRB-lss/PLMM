@@ -565,13 +565,6 @@ td .diff{color:var(--warn)}
           </div>
           <div class="card-body">
             <div class="row" style="margin-bottom:14px;flex-wrap:wrap;gap:8px">
-              <span class="field-label" style="margin:0">方案：</span>
-              <select class="select" style="width:150px" id="selScheme" onchange="onSchemeSelect()"></select>
-              <input class="input" style="width:110px" id="schemeName" placeholder="方案名" onkeydown="if(event.key==='Enter')saveCurrentScheme()">
-              <button class="btn sm" onclick="saveCurrentScheme()">💾 保存方案</button>
-              <button class="btn sm" onclick="deleteCurrentScheme()">✕ 删除方案</button>
-              <button class="btn sm" onclick="applySchemeToChecked()">▼ 应用到勾选</button>
-              <button class="btn sm" onclick="setAllScheme()">全部设为该方案</button>
               <span style="flex:1"></span>
               <label class="check"><input type="checkbox" id="useCategory" onchange="livePreview()"> 按分类命名</label>
               <label class="check"><input type="checkbox" id="groupByExt" onchange="livePreview()"> 按扩展名编号</label>
@@ -947,7 +940,7 @@ td .diff{color:var(--warn)}
       <select class="select" style="width:104px" id="sortBy" onchange="onToolbarFilter()">
         <option value="name">文件名</option><option value="mtime">修改日期</option><option value="size">文件大小</option>
         <option value="cat">分类</option><option value="ext">扩展名</option>
-        <option value="new">新文件名</option><option value="scheme">方案</option>
+        <option value="new">新文件名</option>
       </select>
       <button class="btn sm" style="padding:3px 7px" id="sortDirBtn" onclick="toggleSortDir()" title="切换排序方向">▲</button>
       <span class="spacer"></span>
@@ -964,8 +957,7 @@ td .diff{color:var(--warn)}
           <th style="cursor:pointer" onclick="sortByColumn('old')">原文件名 → 新文件名 ↕<span class="col-resizer" data-col="1" title="拖动调整列宽"></span></th>
           <th>路径<span class="col-resizer" data-col="2" title="拖动调整列宽"></span></th>
           <th style="cursor:pointer" onclick="sortByColumn('cat')">分类 ↕<span class="col-resizer" data-col="3" title="拖动调整列宽"></span></th>
-          <th>方案<span class="col-resizer" data-col="4" title="拖动调整列宽"></span></th>
-          <th>状态<span class="col-resizer" data-col="5" title="拖动调整列宽"></span></th>
+          <th>状态<span class="col-resizer" data-col="4" title="拖动调整列宽"></span></th>
         </tr></thead>
         <tbody id="fileBody"></tbody>
       </table>
@@ -1188,7 +1180,6 @@ td .diff{color:var(--warn)}
           <li><b>添加内容</b>：在文件名前/后统一插入文字（受「添加&替换」开关控制）</li>
           <li><b>查找替换</b>：批量替换文件名中的指定文字（受「添加&替换」开关控制）</li>
           <li><b>正则替换</b>：在「正则替换」页使用正则表达式（留空即不启用），如 `\d+` 去除数字、`\s+` 空格转下划线</li>
-          <li><b>多方案管理</b>：把当前规则保存为「方案」，一键切换不同命名风格；方案存储于 `data/schemes/`</li>
           <li><b>模板管理</b>：保存/加载常用规则模板，模板存储于 `data/templates/`</li>
           <li><b>导出 Excel</b>：将重命名清单导出为 xlsx（原文件名/新文件名/状态/分类/所在文件夹）</li>
         </ul>
@@ -1400,7 +1391,7 @@ async function loadFiles(){
       folders, recursive:$("optRecursive").checked,
       only_folders:$("optOnlyFolder").checked, filter_system:true,
     });
-    files=(d.files||[]).map(f=>({...f,checked:true,new:"",status:"待处理",tag:"pending",scheme:null}));
+    files=(d.files||[]).map(f=>({...f,checked:true,new:"",status:"待处理",tag:"pending"}));
     refreshCatFilter();
     renderTable(); updateStatGrid();
     toast(`已加载 ${files.length} 个文件/文件夹`);
@@ -1466,7 +1457,7 @@ function livePreview(){
 }
 
 /* ================= 表格 ================= */
-let _sortDir={name:1,mtime:1,size:1,cat:-1,ext:1,new:1,scheme:1};  // 点击列头/下拉排序方向记忆
+let _sortDir={name:1,mtime:1,size:1,cat:-1,ext:1,new:1};  // 点击列头/下拉排序方向记忆
 let _ctxFid=null;  // 右键菜单目标文件
 
 function getVisibleFiles(){
@@ -1502,7 +1493,6 @@ function getVisibleFiles(){
     if(sortBy==="cat") return dir*String(a.cat||"其他").localeCompare(String(b.cat||"其他"),"zh-Hans-CN");
     if(sortBy==="ext") return dir*String(a.ext||"").localeCompare(String(b.ext||""));
     if(sortBy==="new") return dir*String(a.new||a.old).localeCompare(String(b.new||b.old),"zh-Hans-CN");
-    if(sortBy==="scheme") return dir*String(a.scheme||"").localeCompare(String(b.scheme||""),"zh-Hans-CN");
     return dir*a.old.localeCompare(b.old,"zh-Hans-CN");
   });
   return list;
@@ -1520,7 +1510,6 @@ function statusMap(s){
 function renderTable(){
   const body=$("fileBody");
   const list=getVisibleFiles();
-  const schemeName=$("selScheme")?$("selScheme").value:"默认方案";
   // 识别页「只显示筛选结果」模式
   if(window._filterByCat&&$("filterShowMode")&&$("filterShowMode").value==="only"){
     // getVisibleFiles 已过滤，直接渲染
@@ -1538,11 +1527,10 @@ function renderTable(){
       <td>${nameCell}</td>
       <td class="path-cell" title="${esc(pathShort)}">${esc(pathShort)}</td>
       <td><span class="cat-tag" title="${esc(f.cat||"其他")}">${esc(f.cat||"其他")}</span></td>
-      <td title="${esc(f.scheme||schemeName)}">${esc(f.scheme||schemeName)}</td>
       <td data-col="status" title="${esc(txt)}"><span class="status-pill ${cls}">${txt}</span></td>
     </tr>`;
   }).join("");
-  body.innerHTML=rows||'<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:26px">请先添加文件夹并加载文件列表</td></tr>';
+  body.innerHTML=rows||'<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:26px">请先添加文件夹并加载文件列表</td></tr>';
   updateCounts(list.length);
   refreshCatFilter();
 }
@@ -1604,10 +1592,7 @@ function showCtxMenu(e,idx){
      <div class="cm-item" onclick="ctxAction('reveal')">📍 定位到文件位置</div>
      <div class="cm-item" onclick="ctxAction('copyNew')">📋 复制新文件名</div>
      <div class="cm-item" onclick="ctxAction('copyPath')">📎 复制文件路径</div>
-     <div class="cm-sep"></div>
-     <div class="cm-item" onclick="ctxAction('applyChecked')">🎯 应用当前方案到勾选</div>
-     <div class="cm-item" onclick="ctxAction('applyAll')">🎯 应用当前方案到全部</div>`}
-     <div class="cm-sep"></div>
+     <div class="cm-sep"></div>`}
      <div class="cm-item" onclick="ctxAction('expand')">🌳 展开未递归文件夹</div>
      <div class="cm-item" onclick="ctxAction('collapse')">🌲 收起未递归文件夹</div>`;
   menu.classList.add("show");
@@ -1639,8 +1624,6 @@ function ctxAction(action){
       break;
     case "copyNew": copyText(f.new||f.old); break;
     case "copyPath": copyText(f.folder?f.folder+"\\"+f.old:f.old); break;
-    case "applyChecked": applySchemeToChecked(); break;
-    case "applyAll": setAllScheme(); break;
     case "expand": toast("文件夹已递归展开（重新加载生效）"); loadFiles(); break;
     case "collapse": toast("文件夹已收起（重新加载生效）"); loadFiles(); break;
   }
@@ -1696,7 +1679,6 @@ async function generatePreview(){
       if(r[f.id]!==undefined){
         f.new=r[f.id].new||"";
         f.status=r[f.id].status||"待处理";
-        f.scheme=$("selScheme")?$("selScheme").value:null;  // 记录方案来源，方案列与实际一致
         f.tag="pending";
       }
     });
@@ -1780,7 +1762,6 @@ async function refreshPreview(){
       if(r[f.id]!==undefined){
         f.new=r[f.id].new||"";
         f.status=r[f.id].status||"待处理";
-        f.scheme=$("selScheme")?$("selScheme").value:null;
         f.tag="pending";
       }
     });
@@ -2227,7 +2208,6 @@ function applyRecognitionAsFilename(){
     if(!base){ skip++; return; }
     f.new=base+(f.ext||"");
     f.status="待处理";
-    f.scheme="AI 识别";
     f.tag="pending";
     ok++;
   });
@@ -2290,7 +2270,7 @@ async function startAiNaming(){
             if(!errMsg) errMsg=String(v).slice(7);
             f.status="失败"; f.tag="err"; f.new="";
           }else if(v){
-            f.new=v; f.status="待处理"; f.scheme=$("selScheme")?$("selScheme").value:null; f.tag="pending"; ok++;
+            f.new=v; f.status="待处理"; f.tag="pending"; ok++;
           }
         });
         renderTable();
@@ -2315,64 +2295,6 @@ async function stopAiNaming(){
   }catch(e){ toast("停止失败："+e.message); }
 }
 
-/* ================= 方案管理 ================= */
-let schemes=[];
-async function loadSchemes(){
-  try{
-    const d=await api("/schemes");
-    schemes=d.schemes||[];
-    const sel=$("selScheme");
-    sel.innerHTML="";
-    (schemes.length?schemes:[{name:"默认方案",data:{}}]).forEach(s=>{
-      const opt=document.createElement("option");
-      opt.value=s.name; opt.textContent=s.name;
-      sel.appendChild(opt);
-    });
-    if(schemes.length) sel.value=schemes[0].name;
-  }catch(e){ toast("加载方案失败："+e.message); }
-}
-function onSchemeSelect(){
-  const name=$("selScheme").value;
-  const s=schemes.find(x=>x.name===name);
-  if(!s||!s.data) return;
-  applySchemeToUI(s.data);
-}
-function applySchemeToUI(d){
-  $("inPrefix").value=d.prefix||"文件";
-  $("inStart").value=d.start_num!=null?d.start_num:1;
-  $("inPad").value=d.pad_width!=null?d.pad_width:2;
-  $("inSuffix").value=d.suffix||"";
-  $("inMode").value={prefix_num:"pn",num_prefix:"np",prefix_num_suffix:"pns"}[d.mode]||"pn";
-  // 恢复功能开关（方案未保存过开关时默认开启）
-  if($("rulesOn")) $("rulesOn").checked=d.rules_on!==false;
-  if($("numOn")) $("numOn").checked=d.numbering_on!==false;
-  if($("addReplaceOn")) $("addReplaceOn").checked=d.add_replace_on!==false;
-  $("regexFind").value=d.regex_find||"";
-  $("regexReplace").value=d.regex_replace||"";
-  $("addText").value=d.add_text||"";
-  $("findText").value=d.find_text||"";
-  $("replaceText").value=d.replace_text||"";
-  livePreview();
-}
-async function saveCurrentScheme(){
-  const name=$("schemeName").value.trim();
-  if(!name){ toast("请输入方案名称"); return; }
-  try{
-    await api("/schemes/save","POST",{name,data:getScheme()});
-    $("schemeName").value="";
-    await loadSchemes();
-    toast("方案已保存："+name);
-  }catch(e){ toast(e.message); }
-}
-async function deleteCurrentScheme(){
-  const name=$("selScheme").value;
-  if(!name||name==="默认方案"){ toast("默认方案不可删除"); return; }
-  try{
-    await api("/schemes/delete","POST",{name});
-    await loadSchemes();
-    toast("已删除方案："+name);
-  }catch(e){ toast(e.message); }
-}
 function insertMetaChip(ph){
   // 在光标处插入元数据占位符到前缀输入框
   const el=$("inPrefix");
@@ -2382,25 +2304,6 @@ function insertMetaChip(ph){
   el.setSelectionRange(start+ph.length,start+ph.length);
   livePreview();
   toast("已插入占位符："+ph);
-}
-function applySchemeToChecked(){
-  // 把当前方案数据应用到勾选文件（记录方案来源）
-  const name=$("selScheme").value;
-  if(!name){ toast("请先选择方案"); return; }
-  const n=files.filter(f=>f.checked).length;
-  if(!n){ toast("请先勾选文件"); return; }
-  files.forEach(f=>{ if(f.checked) f.scheme=name; });
-  renderTable();
-  toast(`已将「${name}」应用到 ${n} 个勾选文件`);
-  livePreview();
-}
-function setAllScheme(){
-  const name=$("selScheme").value;
-  if(!name){ toast("请先选择方案"); return; }
-  files.forEach(f=>{ f.scheme=name; });
-  renderTable();
-  toast(`已将所有文件设为「${name}」`);
-  livePreview();
 }
 async function importExcelFile(input){
   const file=input.files&&input.files[0];
@@ -2423,7 +2326,7 @@ async function importExcelFile(input){
     let applied=0,notFound=0;
     mappings.forEach(m=>{
       const f=files.find(x=>x.old===m.old);
-      if(f){ f.new=m.new; f.status="待处理"; f.scheme="Excel 导入"; applied++; }
+      if(f){ f.new=m.new; f.status="待处理"; applied++; }
       else notFound++;
     });
     renderTable();
@@ -2579,7 +2482,7 @@ function setupColResize(){
   const table=document.querySelector(".preview-table table");
   if(!table) return;
   let dragging=null,startX=0,startW=0,didDrag=false;
-  const minW=[24,120,60,50,60,50];  // 各列最小宽度
+  const minW=[24,120,60,50,60];  // 各列最小宽度
   // 事件委托：从表头拖拽手柄开始拖动
   table.addEventListener("mousedown",e=>{
     const rz=e.target.closest(".col-resizer");
@@ -2669,7 +2572,7 @@ async function init(){
   setupPreviewResize();
   setupColResize();
   refreshFolders(); renderTable(); loadTemplates(); livePreview();
-  loadSchemes(); loadAiConfig();
+  loadAiConfig();
 }
 init();
 document.addEventListener("keydown",e=>{
