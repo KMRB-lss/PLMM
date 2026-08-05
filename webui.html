@@ -317,13 +317,19 @@ body{
 .count-badge{font-size:12px;color:var(--text-2);font-family:var(--font-mono)}
 .count-badge b{color:var(--accent-2)}
 .preview-table{flex:1;min-height:0;overflow:auto;position:relative}
-table{width:100%;border-collapse:collapse;font-size:12.5px}
+table{width:100%;border-collapse:collapse;font-size:12.5px;table-layout:fixed}
 thead th{
   position:sticky;top:0;z-index:3;text-align:left;padding:9px 12px;
   background:var(--bg-deep);color:var(--text-3);font-weight:600;font-size:11.5px;
   border-bottom:1px solid var(--border);letter-spacing:.4px;white-space:nowrap;cursor:pointer;
+  position:relative;overflow:hidden;
 }
-thead th:hover{color:var(--text-2)}
+thead th .col-resizer{
+  position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize;
+  background:transparent;z-index:5;user-select:none;
+}
+thead th .col-resizer:hover{background:var(--accent)}
+thead th .col-resizer.active{background:var(--accent)}
 tbody tr{border-bottom:1px solid rgba(35,46,58,.55);transition:background .12s;animation:fadeRow .3s both}
 tbody tr:nth-child(even){background:rgba(255,255,255,.014)}
 tbody tr:hover{background:rgba(45,212,191,.05)}
@@ -948,12 +954,12 @@ td .diff{color:var(--warn)}
     <div class="preview-table">
       <table>
         <thead><tr>
-          <th style="width:34px">✓</th>
-          <th style="cursor:pointer" onclick="sortByColumn('old')">原文件名 → 新文件名 ↕</th>
-          <th>路径</th>
-          <th style="cursor:pointer" onclick="sortByColumn('cat')">分类 ↕</th>
-          <th>方案</th>
-          <th>状态</th>
+          <th style="width:34px">✓<span class="col-resizer" data-col="0" title="拖动调整列宽"></span></th>
+          <th style="cursor:pointer" onclick="sortByColumn('old')">原文件名 → 新文件名 ↕<span class="col-resizer" data-col="1" title="拖动调整列宽"></span></th>
+          <th>路径<span class="col-resizer" data-col="2" title="拖动调整列宽"></span></th>
+          <th style="cursor:pointer" onclick="sortByColumn('cat')">分类 ↕<span class="col-resizer" data-col="3" title="拖动调整列宽"></span></th>
+          <th>方案<span class="col-resizer" data-col="4" title="拖动调整列宽"></span></th>
+          <th>状态<span class="col-resizer" data-col="5" title="拖动调整列宽"></span></th>
         </tr></thead>
         <tbody id="fileBody"></tbody>
       </table>
@@ -2209,39 +2215,42 @@ async function startAiNaming(){
   window._aiNamingRunning=true;
   if($("stopAiBtn")) $("stopAiBtn").disabled=false;
   setBar(`AI 正在生成文件名…（0/${ids.length}）`,8);
-  // 进度轮询：显示 已处理 X/N，避免批量耗时期间界面无反馈
   const total=ids.length;
-  window._aiProgressTimer=setInterval(async()=>{
-    try{
-      const st=await api("/ai/naming/status","POST",{});
+  try{
+    // 提交任务（异步启动，立即返回）
+    await api("/ai/naming","POST",{ids,config:cfg});
+    // 轮询等待完成 / 进度
+    const t0=Date.now();
+    while(Date.now()-t0<30*60*1000){
+      await new Promise(r=>setTimeout(r,1200));
+      let st;
+      try{ st=await api("/ai/naming/status","POST",{}); }catch(e){ continue; }
       const done=Math.min(st.done||0,total);
       const pct=total?Math.round(8+done/total*86):8;
-      setBar(`AI 正在生成文件名…（${done}/${total}）`,pct);
-    }catch(e){}
-  },1200);
-  try{
-    const d=await api("/ai/naming","POST",{ids,config:cfg});
-    clearInterval(window._aiProgressTimer);
-    const r=d.results||{};
-    let ok=0, failed=0, errMsg=null;
-    files.forEach(f=>{
-      const v=r[f.id];
-      if(v===undefined) return;
-      if(String(v).startsWith("__ERR__")){
-        failed++;
-        if(!errMsg) errMsg=String(v).slice(7);
-        f.status="失败"; f.tag="err"; f.new="";
-      }else if(v){
-        f.new=v; f.status="待处理"; f.scheme=$("selScheme")?$("selScheme").value:null; f.tag="pending"; ok++;
+      setBar(`AI 正在生成文件名…（${done}/${total}）${st.stop_requested?" · 正在停止…":""}`,pct);
+      if(!st.running){
+        // 任务结束：用最终结果填充列表（成功的新名 / 失败的标红）
+        const r=st.results||{};
+        let ok=0, failed=0, errMsg=null;
+        files.forEach(f=>{
+          const v=r[f.id];
+          if(v===undefined) return;
+          if(String(v).startsWith("__ERR__")){
+            failed++;
+            if(!errMsg) errMsg=String(v).slice(7);
+            f.status="失败"; f.tag="err"; f.new="";
+          }else if(v){
+            f.new=v; f.status="待处理"; f.scheme=$("selScheme")?$("selScheme").value:null; f.tag="pending"; ok++;
+          }
+        });
+        renderTable();
+        setBar(`AI 命名完成：${ok} 个成功${failed?` · ${failed} 个失败`:""}${st.stop_requested?" · 已停止":""}`,100);
+        const base=failed?(`${failed} 个失败：${errMsg||"原因未知"}`):`已为 ${ok} 个文件生成新文件名`;
+        toast(base+(st.stop_requested?"（已停止）":""));
+        break;
       }
-    });
-    renderTable();
-    const stopped=d.stopped?" · 已停止":"";
-    setBar(`AI 命名完成：${ok} 个成功${failed?` · ${failed} 个失败`:""}${stopped}`,100);
-    const base=failed?(`${failed} 个失败：${errMsg||"原因未知"}`):`已为 ${ok} 个文件生成新文件名`;
-    toast(base+(stopped?"（已停止）":""));
+    }
   }catch(e){
-    clearInterval(window._aiProgressTimer);
     setBar("AI 命名失败",0);
     toast("AI 命名失败："+e.message);
   }
@@ -2511,6 +2520,41 @@ function toast(msg){
   setTimeout(()=>{ el.style.opacity="0"; el.style.transition="opacity .3s"; setTimeout(()=>el.remove(),320); },2600);
 }
 
+/* ================= 预览表列宽拖拽调整 ================= */
+function setupColResize(){
+  const table=document.querySelector(".preview-table table");
+  if(!table) return;
+  let dragging=null,startX=0,startW=0;
+  const minW=[24,120,60,50,60,50];  // 各列最小宽度
+  // 事件委托：从表头拖拽手柄开始拖动
+  table.addEventListener("mousedown",e=>{
+    const rz=e.target.closest(".col-resizer");
+    if(!rz) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const col=parseInt(rz.dataset.col||"1",10);
+    const th=rz.parentElement;
+    startX=e.clientX;
+    startW=th.getBoundingClientRect().width;
+    dragging={col,th,rz};
+    rz.classList.add("active");
+    document.body.style.userSelect="none";
+    document.body.style.cursor="col-resize";
+  });
+  document.addEventListener("mousemove",e=>{
+    if(!dragging) return;
+    const w=Math.max(minW[dragging.col]||24,startW+(e.clientX-startX));
+    dragging.th.style.width=w+"px";
+  });
+  document.addEventListener("mouseup",()=>{
+    if(!dragging) return;
+    dragging.rz.classList.remove("active");
+    dragging=null;
+    document.body.style.userSelect="";
+    document.body.style.cursor="";
+  });
+}
+
 /* ================= 预览区拖拽调整 ================= */
 function setupPreviewResize(){
   const handle=$("previewHandle");
@@ -2558,6 +2602,7 @@ async function init(){
     c.addEventListener("click",()=>setAiContentMode(c.dataset.aiMode));
   });
   setupPreviewResize();
+  setupColResize();
   refreshFolders(); renderTable(); loadTemplates(); livePreview();
   loadSchemes(); loadAiConfig();
 }

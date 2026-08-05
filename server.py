@@ -75,6 +75,7 @@ for _d in (UNDO_DIR, TEMPLATE_DIR, SCHEME_DIR, LOG_DIR):
     os.makedirs(_d, exist_ok=True)
 
 AI_READ_TIMEOUT = 90
+AI_LOCAL_TIMEOUT = 30  # 本地 Ollama 单次命名超时（秒），缩短以便「停止」更快响应
 MAX_RETRIES = 2
 LOCAL_DEFAULT_BASE = "http://localhost:11434"
 
@@ -414,6 +415,7 @@ class AppState:
         self.ai_naming = False        # 是否正在 AI 内容命名
         self.ai_naming_total = 0      # AI 命名总数（用于进度）
         self.ai_naming_done = 0       # AI 命名已完成数
+        self.ai_naming_result = None  # AI 命名最终结果 {results, stopped, failed, error_detail}
 
     def log(self, msg, level="info"):
         """记录操作日志：内存(500条) + 持久化到 data/logs/web.log"""
@@ -887,7 +889,8 @@ def _ai_content_local_call(prompt, cfg):
     try:
         return chat_completion(endpoint, model, "", [{"role": "user", "content": prompt}],
                                max_tokens=cfg.get("local_max_tokens", 512),
-                               temperature=cfg.get("local_temperature", 0.7))
+                               temperature=cfg.get("local_temperature", 0.7),
+                               timeout=AI_LOCAL_TIMEOUT)
     except Exception as e:
         raise Exception(f"本地模型调用失败（{base}）: {e}\n请确认 Ollama/LM Studio 已启动")
 
@@ -932,6 +935,7 @@ def run_ai_naming(ids, cfg):
     STATE.ai_naming = True
     STATE.ai_naming_total = len(ids)
     STATE.ai_naming_done = 0
+    STATE.ai_naming_result = None
     try:
         limit_map = {"auto": 2000, "500": 500, "1000": 1000, "2000": 2000, "5000": 5000}
         limit = limit_map.get(cfg.get("ai_content_limit", "auto"), 2000)
@@ -999,6 +1003,7 @@ def run_ai_naming(ids, cfg):
                 except Exception as e:
                     results[b["fid"]] = f"__ERR__:{e}"
                 STATE.ai_naming_done += 1
+        STATE.ai_naming_result = results
         return results, None, STATE.ai_naming_stop
     finally:
         STATE.ai_naming = False
@@ -1741,7 +1746,8 @@ class Handler(BaseHTTPRequestHandler):
                 json_resp(self, {"ok": True, "ai_naming": STATE.ai_naming})
             elif path == "/api/ai/naming/status":
                 json_resp(self, {"running": STATE.ai_naming, "stop_requested": STATE.ai_naming_stop,
-                                 "total": STATE.ai_naming_total, "done": STATE.ai_naming_done})
+                                 "total": STATE.ai_naming_total, "done": STATE.ai_naming_done,
+                                 "results": STATE.ai_naming_result})
             elif path == "/api/ai/test":
                 self._handle_test_api(data)
             else:
@@ -1839,29 +1845,45 @@ class Handler(BaseHTTPRequestHandler):
             traceback.print_exc()
             json_resp(self, {"error": str(e)}, 500)
 
+    def _json_safe(self, obj, code=200):
+        """从工作线程向客户端写回 JSON（线程安全）"""
+        try:
+            json_resp(self, obj, code)
+        except Exception:
+            pass
+
     def _handle_ai_naming(self, data):
         ids = data.get("ids", [])
         if not ids:
             json_resp(self, {"error": "没有要命名的文件"}, 400)
             return
+        if STATE.ai_naming:
+            json_resp(self, {"error": "已有 AI 命名任务正在进行，请等待完成或先点击停止"}, 400)
+            return
         cfg = load_ai_config()
         if data.get("config"):
             cfg.update(data.get("config"))
-        try:
-            results, err, stopped = run_ai_naming(ids, cfg)
-            if err:
-                json_resp(self, {"error": err}, 400)
-                return
-            ok = sum(1 for v in results.values() if v and not str(v).startswith("__ERR__"))
-            errs = [str(v).split(":", 1)[1] if ":" in str(v) else str(v)
-                    for v in results.values() if str(v).startswith("__ERR__")]
-            STATE.log(f"AI 内容命名完成：{ok} 个成功" + (f"，{len(errs)} 个失败" if errs else "") +
-                      ("（已停止）" if stopped else ""))
-            json_resp(self, {"results": results, "stopped": stopped,
-                             "failed": len(errs), "error_detail": (errs[0] if errs else None)})
-        except Exception as e:
-            traceback.print_exc()
-            json_resp(self, {"error": str(e)}, 500)
+
+        # 独立线程执行命名：主线程立即返回，避免阻塞 HTTP 导致「停止」请求无法到达
+        def worker():
+            try:
+                results, err, stopped = run_ai_naming(ids, cfg)
+                if err:
+                    self._json_safe({"error": err}, 400)
+                    return
+                ok = sum(1 for v in results.values() if v and not str(v).startswith("__ERR__"))
+                errs = [str(v).split(":", 1)[1] if ":" in str(v) else str(v)
+                        for v in results.values() if str(v).startswith("__ERR__")]
+                STATE.log(f"AI 内容命名完成：{ok} 个成功" + (f"，{len(errs)} 个失败" if errs else "") +
+                          ("（已停止）" if stopped else ""))
+                self._json_safe({"results": results, "stopped": stopped,
+                                 "failed": len(errs), "error_detail": (errs[0] if errs else None)})
+            except Exception as e:
+                traceback.print_exc()
+                self._json_safe({"error": str(e)}, 500)
+
+        threading.Thread(target=worker, daemon=True).start()
+        json_resp(self, {"started": True})
 
     def _handle_test_api(self, data):
         """测试云端 API 连接（支持前端实时表单配置覆盖）。
