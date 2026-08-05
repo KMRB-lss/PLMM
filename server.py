@@ -238,7 +238,7 @@ def replace_meta_placeholders(text, meta, index=None):
         return text
 
 
-def read_file_metadata(filepath):
+def read_file_metadata(filepath, orig_name=None):
     meta = {}
     try:
         st = os.stat(filepath)
@@ -254,7 +254,9 @@ def read_file_metadata(filepath):
         ext_dot = os.path.splitext(filepath)[1].lower()
         meta["文件扩展名"] = ext_dot.lstrip(".") if ext_dot else "(无)"
         meta["文件扩展名-带点"] = ext_dot if ext_dot else "(无)"
-        meta["原文件名"] = os.path.splitext(os.path.basename(filepath))[0]
+        # 原文件名：优先使用首次加载的原始文件名（重命名后 old 已变，但占位符应保持原始名）
+        base_name = os.path.basename(orig_name or filepath)
+        meta["原文件名"] = os.path.splitext(base_name)[0]
         try:
             author, owner = _win_file_author(filepath)
             if author:
@@ -536,7 +538,8 @@ def scan_files(folders, recursive, only_folders, filter_system):
             size, mtime = 0, ""
         ext = os.path.splitext(name)[1].lower()
         with STATE.lock:
-            STATE.file_map[fid] = {"folder": os.path.dirname(path), "old": name, "old_path": path}
+            # orig：首次加载的原始文件名，重命名后 old 会更新为新名，但 {原文件名} 元数据始终引用 orig
+            STATE.file_map[fid] = {"folder": os.path.dirname(path), "old": name, "old_path": path, "orig": name}
         return {"id": fid, "old": name, "ext": ext, "relpath": name,
                 "size": size, "mtime": mtime, "cat": guess_category(name) if not is_folder else "文件夹",
                 "folder": os.path.dirname(path), "_is_folder": is_folder}
@@ -611,13 +614,13 @@ def compute_preview(ids, scheme):
             elif scheme.get("group_by_ext"):
                 key = ext.lower() or "(无扩展名)"
                 scheme_indices.setdefault(key, 0)
-                meta = read_file_metadata(os.path.join(folder, old))
+                meta = read_file_metadata(os.path.join(folder, old), orig_name=info.get("orig"))
                 new_base = build_new_name(scheme, scheme_indices[key], meta=meta, force_numbering=True)
                 scheme_indices[key] += 1
             # 命名规则已配置：前缀/编号生成新名
             elif rules_on:
                 scheme_indices.setdefault("default", 0)
-                meta = read_file_metadata(os.path.join(folder, old))
+                meta = read_file_metadata(os.path.join(folder, old), orig_name=info.get("orig"))
                 new_base = build_new_name(scheme, scheme_indices["default"], meta=meta)
                 scheme_indices["default"] += 1
             # 命名规则未配置：以原文件名为基础（此时「添加&替换/正则」独立生效）
