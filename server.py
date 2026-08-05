@@ -673,6 +673,20 @@ def perform_rename(ids, scheme):
             stats["success"] += 1
             operations.append({"folder": info["folder"], "old": info["old"], "new": new})
             results[fid] = {"status": "成功", "old": info["old"], "new": new}
+            # 同步更新内存状态：使后续预览/重命名基于真实磁盘文件名，避免「找不到文件」
+            with STATE.lock:
+                entry = STATE.file_map.get(fid)
+                if entry is not None:
+                    entry["old"] = new
+                    entry["old_path"] = new_path
+                for sf in STATE.files:
+                    if sf.get("id") == fid:
+                        sf["old"] = new
+                        sf["relpath"] = new
+                        sf["ext"] = os.path.splitext(new)[1].lower()
+                        if not sf.get("_is_folder"):
+                            sf["cat"] = guess_category(new)
+                        break
         except PermissionError:
             stats["failed"] += 1
             results[fid] = {"status": "失败: 权限", "old": info["old"], "new": new}

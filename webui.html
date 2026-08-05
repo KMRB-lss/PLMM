@@ -1684,7 +1684,18 @@ async function startRename(){
         const st=r[f.id].status||"";
         f.status=st;
         f.tag=st==="成功"?"ok":(st==="跳过"?"warn":(st.startsWith("失败")?"err":"pending"));
-        if(st==="成功"){ f.new=r[f.id].new||f.new; }
+        if(st==="成功"){
+          const nn=r[f.id].new;
+          if(nn){
+            // 磁盘文件已改名：当前文件名更新为新名并清空预览，列表即真实状态，可继续后续操作
+            f.old=nn;
+            const dot=nn.lastIndexOf(".");
+            f.ext=dot>=0?nn.slice(dot).toLowerCase():"";
+            f.new="";
+          }
+        }else{
+          f.new=r[f.id].new||f.new;
+        }
       }
     });
     renderTable();
