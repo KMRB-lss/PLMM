@@ -1521,6 +1521,7 @@ function statusMap(s){
   if(s==="成功") return ["sp-ok","成功"];
   if(s==="待处理"||s==="待重命名") return ["sp-pending","待处理"];
   if(s==="跳过"||s==="已跳过") return ["sp-warn","跳过"];
+  if(s&&s.startsWith("跳过")) return ["sp-warn",s];  // 跳过: 原因
   return ["sp-err",s];  // 失败: xxx / 错误: xxx
 }
 
@@ -1733,7 +1734,7 @@ async function startRename(){
       if(r[f.id]!==undefined){
         const st=r[f.id].status||"";
         f.status=st;
-        f.tag=st==="成功"?"ok":(st==="跳过"?"warn":(st.startsWith("失败")?"err":"pending"));
+        f.tag=st==="成功"?"ok":(st.startsWith("跳过")?"warn":(st.startsWith("失败")?"err":"pending"));
         if(st==="成功"){
           const nn=r[f.id].new;
           if(nn){

@@ -367,15 +367,15 @@ def build_new_name(scheme, index, meta=None, force_numbering=False):
 
 def get_unique_path(folder, new_base, ext, old_name=None):
     cand = f"{new_base}{ext}"
-    # 目标名与原文件名一致：允许同名（即文件自身），不算冲突，不追加 _1
-    if old_name and cand == old_name:
+    # 目标名与原文件名一致（Windows 大小写不敏感）：允许同名（即文件自身），不算冲突，不追加 _1
+    if old_name and cand.lower() == old_name.lower():
         return cand
     if not os.path.exists(os.path.join(folder, cand)):
         return cand
     counter = 1
     while True:
         cand2 = f"{new_base}_{counter}{ext}"
-        if old_name and cand2 == old_name:
+        if old_name and cand2.lower() == old_name.lower():
             counter += 1
             continue
         if not os.path.exists(os.path.join(folder, cand2)):
@@ -576,6 +576,7 @@ def compute_preview(ids, scheme):
         file_map = dict(STATE.file_map)
     scheme = scheme or {}
     scheme_indices = {}
+    used_targets = {}  # folder -> 本批已占用的目标名集合（小写），用于批内去重
     for fid in ids:
         info = file_map.get(fid)
         if not info:
@@ -635,7 +636,18 @@ def compute_preview(ids, scheme):
             new_base = apply_regex(new_base, scheme)
             new_base = sanitize_filename(new_base) or "文件"
             # old_name：目标名与原文件名一致时允许同名（自身不算冲突）
-            results[fid] = {"new": get_unique_path(folder, new_base, ext, old_name=old), "status": "待重命名"}
+            new_name = get_unique_path(folder, new_base, ext, old_name=old)
+            # 批内去重：本批其他文件已占用该目标名（且非自身）时自动加 _N，保证预览与执行一致
+            used_set = used_targets.setdefault(folder, set())
+            cand = new_name
+            base0, ext0 = os.path.splitext(cand)
+            n = 1
+            while cand.lower() in used_set and cand.lower() != old.lower():
+                cand = f"{base0}_{n}{ext0}"
+                n += 1
+            if cand.lower() != old.lower():
+                used_set.add(cand.lower())
+            results[fid] = {"new": cand, "status": "待重命名"}
         except Exception as e:
             results[fid] = {"new": "", "status": f"错误: {e}"}
     return results
@@ -680,6 +692,8 @@ def perform_undo():
 
 def perform_rename(ids, scheme):
     fixed_names = (scheme or {}).get("fixed_names") or {}
+    with STATE.lock:
+        file_map = dict(STATE.file_map)
     # AI 命名结果直通模式：使用前端已定稿的目标名，不再按规则重新计算
     if fixed_names:
         preview = {}
@@ -688,15 +702,21 @@ def perform_rename(ids, scheme):
                 _fid = int(_fid)
             except (TypeError, ValueError):
                 pass
-            if _name:
-                preview[_fid] = {"new": _name}
+            if not _name:
+                continue
+            # AI 直通同样做冲突防护：与自身同名放行，与其他文件撞名自动加 _1（与规则预览一致）
+            info = file_map.get(_fid)
+            if info:
+                _name = get_unique_path(info["folder"], os.path.splitext(_name)[0],
+                                        os.path.splitext(_name)[1] or os.path.splitext(info["old"])[1],
+                                        old_name=info["old"])
+            preview[_fid] = {"new": _name}
     else:
         preview = compute_preview(ids, scheme)
     stats = {"total": len(ids), "success": 0, "failed": 0, "skipped": 0, "stopped": False}
     results = {}  # fid -> {"status": "成功"|"失败"|"跳过", "old":…, "new":…}
     operations = []
-    with STATE.lock:
-        file_map = dict(STATE.file_map)
+    used_targets = {}  # 执行层批内去重（覆盖 AI 直通路径，防止同批同名互相覆盖）
     for fid in ids:
         if STATE.rename_stop:
             STATE.log("重命名已被用户停止", "warning")
@@ -704,12 +724,29 @@ def perform_rename(ids, scheme):
             break
         info = file_map.get(fid)
         new = preview.get(fid, {}).get("new", "")
-        if not info or not new:
+        if not info:
+            # 前端列表与后端状态不一致（如后端重启/重新加载后旧页面仍操作）——提示重新加载，避免静默跳过
             stats["skipped"] += 1
-            results[fid] = {"status": "跳过", "old": "", "new": ""}
+            results[fid] = {"status": "跳过: 文件列表已失效，请重新加载", "old": "", "new": ""}
             continue
-        old_path = os.path.join(info["folder"], info["old"])
-        new_path = os.path.join(info["folder"], new)
+        if not new:
+            stats["skipped"] += 1
+            results[fid] = {"status": "跳过: 未生成新文件名", "old": info["old"], "new": ""}
+            continue
+        folder = info["folder"]
+        # 批内去重：目标名已被本批其他文件占用（且非自身）时自动加 _N
+        used_set = used_targets.setdefault(folder, set())
+        cand = new
+        base0, ext0 = os.path.splitext(cand)
+        n = 1
+        while cand.lower() in used_set and cand.lower() != info["old"].lower():
+            cand = f"{base0}_{n}{ext0}"
+            n += 1
+        if cand.lower() != info["old"].lower():
+            used_set.add(cand.lower())
+        new = cand
+        old_path = os.path.join(folder, info["old"])
+        new_path = os.path.join(folder, new)
         if not os.path.exists(old_path):
             stats["failed"] += 1
             results[fid] = {"status": "失败: 找不到", "old": info["old"], "new": new}
