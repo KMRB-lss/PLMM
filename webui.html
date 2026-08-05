@@ -1505,9 +1505,10 @@ function renderTable(){
     // getVisibleFiles 已过滤，直接渲染
   }
   const rows=list.map(f=>{
+    const oldT=`title="${esc(f.old)}"`;
     const nameCell=f.new
-      ? `<span class="old">${esc(f.old)}</span> → <span class="new">${esc(f.new)}</span>`
-      : `<span class="old">${esc(f.old)}</span>`;
+      ? `<span class="old" ${oldT}>${esc(f.old)}</span> → <span class="new" title="${esc(f.new)}">${esc(f.new)}</span>`
+      : `<span class="old" ${oldT}>${esc(f.old)}</span>`;
     const [cls,txt]=statusMap(f.status);
     const idx=files.indexOf(f);
     const pathShort=f.folder||"";
@@ -1515,9 +1516,9 @@ function renderTable(){
       <td><label class="check"><input type="checkbox" data-idx="${idx}" ${f.checked?"checked":""} onchange="toggleOne(${idx},this.checked)"></label></td>
       <td>${nameCell}</td>
       <td class="path-cell" title="${esc(pathShort)}">${esc(pathShort)}</td>
-      <td><span class="cat-tag">${esc(f.cat||"其他")}</span></td>
-      <td>${esc(f.scheme||schemeName)}</td>
-      <td data-col="status"><span class="status-pill ${cls}">${txt}</span></td>
+      <td><span class="cat-tag" title="${esc(f.cat||"其他")}">${esc(f.cat||"其他")}</span></td>
+      <td title="${esc(f.scheme||schemeName)}">${esc(f.scheme||schemeName)}</td>
+      <td data-col="status" title="${esc(txt)}"><span class="status-pill ${cls}">${txt}</span></td>
     </tr>`;
   }).join("");
   body.innerHTML=rows||'<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:26px">请先添加文件夹并加载文件列表</td></tr>';
@@ -2552,7 +2553,7 @@ function toast(msg){
 function setupColResize(){
   const table=document.querySelector(".preview-table table");
   if(!table) return;
-  let dragging=null,startX=0,startW=0;
+  let dragging=null,startX=0,startW=0,didDrag=false;
   const minW=[24,120,60,50,60,50];  // 各列最小宽度
   // 事件委托：从表头拖拽手柄开始拖动
   table.addEventListener("mousedown",e=>{
@@ -2565,12 +2566,14 @@ function setupColResize(){
     startX=e.clientX;
     startW=th.getBoundingClientRect().width;
     dragging={col,th,rz};
+    didDrag=false;
     rz.classList.add("active");
     document.body.style.userSelect="none";
     document.body.style.cursor="col-resize";
   });
   document.addEventListener("mousemove",e=>{
     if(!dragging) return;
+    if(Math.abs(e.clientX-startX)>3) didDrag=true;  // 确实发生了拖动
     const w=Math.max(minW[dragging.col]||24,startW+(e.clientX-startX));
     dragging.th.style.width=w+"px";
   });
@@ -2580,7 +2583,16 @@ function setupColResize(){
     dragging=null;
     document.body.style.userSelect="";
     document.body.style.cursor="";
+    // click 事件紧随 mouseup 派发；拖拽刚结束时拦截它，避免误触表头排序改变文件顺序
+    setTimeout(()=>{ didDrag=false; },0);
   });
+  // 捕获阶段拦截：拖拽列宽后本次 click 不触发表头排序
+  document.addEventListener("click",e=>{
+    if(!didDrag) return;
+    didDrag=false;
+    e.stopPropagation();
+    e.preventDefault();
+  },true);
 }
 
 /* ================= 预览区拖拽调整 ================= */
