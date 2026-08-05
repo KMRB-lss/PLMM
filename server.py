@@ -423,6 +423,59 @@ class AppState:
 
 STATE = AppState()
 
+# 程序退出控制（exe 无窗口模式）：浏览器关闭标签页 / 点击退出按钮时结束进程
+_exit_lock = threading.Lock()
+_exit_timer = None
+_EXIT_DELAY_AUTO = 10.0    # 自动退出（关标签页）延迟：给页面刷新留窗口
+_EXIT_DELAY_MANUAL = 1.5   # 按钮退出延迟：给前端收尾留时间
+
+
+def _cancel_pending_exit():
+    """取消待执行的退出（页面刷新 / 重新活跃时调用）"""
+    global _exit_timer
+    with _exit_lock:
+        if _exit_timer is not None:
+            try:
+                _exit_timer.cancel()
+            except Exception:
+                pass
+            _exit_timer = None
+            STATE.log("已取消退出（页面重新活跃）", "info")
+
+
+def _schedule_exit(delay, reason):
+    """延迟后退出程序（exe 模式下彻底结束进程）"""
+    global _exit_timer
+    with _exit_lock:
+        # 取消旧定时器（内联实现，避免嵌套获取非重入锁造成死锁）
+        if _exit_timer is not None:
+            try:
+                _exit_timer.cancel()
+            except Exception:
+                pass
+            _exit_timer = None
+        STATE.log(f"收到退出请求（{reason}），{delay:.0f} 秒后关闭程序", "warning")
+
+        def _do_exit():
+            STATE.log("程序即将关闭", "info")
+            # 强制结束进程（exe 无窗口模式下最可靠），避免 shutdown() 阻塞等待
+            try:
+                svr = _current_server
+                if svr is not None:
+                    # 在新线程中优雅停止 serve_forever，随后强制退出
+                    threading.Thread(target=svr.shutdown, daemon=True).start()
+            except Exception:
+                pass
+            time.sleep(0.2)
+            os._exit(0)
+
+        _exit_timer = threading.Timer(delay, _do_exit)
+        _exit_timer.daemon = True
+        _exit_timer.start()
+
+
+_current_server = None  # 由 main() 注入，供退出流程调用 shutdown()
+
 
 # ============================================================
 # 文件扫描
@@ -1380,8 +1433,19 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
         data = read_json(self)
+        # 除退出相关接口外，任意活跃请求视为程序仍在被使用，取消待退出
+        if path not in ("/api/exit", "/api/exit/cancel"):
+            _cancel_pending_exit()
         try:
-            if path == "/api/folders/pick":
+            if path == "/api/exit":
+                mode = (data or {}).get("mode", "manual")
+                delay = _EXIT_DELAY_MANUAL if mode == "manual" else _EXIT_DELAY_AUTO
+                _schedule_exit(delay, "按钮退出" if mode == "manual" else "浏览器标签页关闭")
+                json_resp(self, {"ok": True, "delay": delay})
+            elif path == "/api/exit/cancel":
+                _cancel_pending_exit()
+                json_resp(self, {"ok": True})
+            elif path == "/api/folders/pick":
                 self._handle_pick_folder()
             elif path == "/api/folders/add":
                 folder = data.get("path", "").strip()
@@ -1671,6 +1735,8 @@ def main():
     if len(sys.argv) > 1:
         port = int(sys.argv[1])
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    global _current_server
+    _current_server = server
     STATE.log(f"Web 服务已启动，端口 {port}，数据目录 {DATA_DIR}", "success")
     print("=" * 56)
     print("  批量文件重命名工具 · Web 控制台（完整版）")

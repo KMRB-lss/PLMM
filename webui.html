@@ -496,6 +496,7 @@ td .diff{color:var(--warn)}
       <button class="btn ghost" onclick="openModal('helpModal')">📖 使用说明</button>
       <button class="btn ghost" onclick="openModal('logModal')">📋 操作日志</button>
       <button class="btn ghost" onclick="openModal('donateModal')">💖 打赏作者</button>
+      <button class="btn ghost" style="color:#ff7a7a;border-color:rgba(255,90,90,.35)" onclick="exitApp()">⏻ 退出程序</button>
     </div>
   </header>
 
@@ -1234,6 +1235,53 @@ async function api(path, method="GET", body=null){
   return data;
 }
 const $ = id=>document.getElementById(id);
+
+/* ================= 退出程序 ================= */
+let _exitInited=false;
+function initExitHandlers(){
+  if(_exitInited) return;
+  _exitInited=true;
+  // 关闭标签页 / 刷新时：告知服务端待退出（服务端延迟 10 秒，期间重新加载即取消）
+  window.addEventListener("pagehide",()=>{
+    try{
+      const body=JSON.stringify({mode:"auto"});
+      if(navigator.sendBeacon){ navigator.sendBeacon("/api/exit",new Blob([body],{type:"application/json"})); }
+      else{ fetch("/api/exit",{method:"POST",headers:{"Content-Type":"application/json"},body,keepalive:true}).catch(()=>{}); }
+    }catch(e){}
+  });
+  // 页面刷新 / 从缓存恢复：服务端若已收到自动退出请求，这里立即取消
+  window.addEventListener("pageshow",(e)=>{
+    if(e.persisted){
+      fetch("/api/exit/cancel",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).catch(()=>{});
+    }else{
+      // 正常重新加载：首个请求就会由服务端自动取消待退出，无需额外处理
+      fetch("/api/exit/cancel",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).catch(()=>{});
+    }
+  });
+}
+function exitApp(){
+  if(!confirm("确定要退出程序吗？\n退出后如需使用请重新打开。")) return;
+  const body=JSON.stringify({mode:"manual"});
+  try{
+    if(navigator.sendBeacon){ navigator.sendBeacon("/api/exit",new Blob([body],{type:"application/json"})); }
+    else{ fetch("/api/exit",{method:"POST",headers:{"Content-Type":"application/json"},body,keepalive:true}).catch(()=>{}); }
+  }catch(e){}
+  // 显示退出遮罩，服务端 1.5 秒后结束进程
+  showExitOverlay();
+  setTimeout(()=>{ try{ window.close(); }catch(e){} },800);
+}
+function showExitOverlay(){
+  let ov=$("exitOverlay");
+  if(!ov){
+    ov=document.createElement("div");
+    ov.id="exitOverlay";
+    ov.style.cssText="position:fixed;inset:0;z-index:99999;background:rgba(10,14,18,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#e8f5ef;font-family:inherit;";
+    ov.innerHTML='<div style="font-size:44px">⏻</div><div style="font-size:18px;font-weight:600">程序已退出</div><div style="font-size:13px;color:#9fb8ad">您现在可以关闭此窗口了</div>';
+    document.body.appendChild(ov);
+  }
+  ov.style.display="flex";
+}
+document.addEventListener("DOMContentLoaded",initExitHandlers);
 
 /* ================= 状态 ================= */
 let files=[];        // {id,old,ext,relpath,size,mtime,cat,checked,new,status,tag}
