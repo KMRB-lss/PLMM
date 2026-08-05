@@ -590,7 +590,10 @@ def compute_preview(ids, scheme):
             name, ext = os.path.splitext(old)
 
             # 命名规则是否启用（前端 getScheme 传入 rules_on，兼容旧方案 rules_enabled）
-            rules_on = bool(scheme.get("rules_on", scheme.get("rules_enabled")))
+            # 需同时满足：功能开关打开 且 已显式配置规则（前缀/后缀/非默认模式）；
+            # 未显式配置时保留原文件名，让「添加&替换/正则」独立生效（与前端提示一致）
+            rules_enabled = bool(scheme.get("rules_enabled", True))
+            rules_on = bool(scheme.get("rules_on", True)) and rules_enabled
             numbering_on = bool(scheme.get("numbering_on", True))
             add_replace_on = bool(scheme.get("add_replace_on", True))
             old_name = name
