@@ -162,6 +162,11 @@ DEFAULT_AI_CONFIG = {
     "ai_content_prompt": "请根据以下内容为文件生成简短文件名（不超过15字，只返回文件名本身，不要扩展名）。\n文件: {filename}\n内容: {content}",
     "ai_content_limit": "auto",           # auto / 500 / 1000 / 2000 / 5000
     "ai_batch_opt": "batch",              # single / batch
+    # AI 内容命名页独立云端配置（与图片识别页互不影响，留空时回退到 api_*）
+    "ai_naming_provider": "",
+    "ai_naming_key": "",
+    "ai_naming_model": "",
+    "ai_naming_endpoint": "",
     "local_model": "",
     "local_api_base": LOCAL_DEFAULT_BASE,
     "local_temperature": 0.7,
@@ -304,13 +309,24 @@ def _win_file_author(filepath):
     return author, owner
 
 
+def _py_replacement(repl):
+    """将 JS 风格替换引用（$1、$&）转换为 Python 语法（\\g<1>、\\g<0>）。
+    前端正则预设使用 $1 等写法，而 Python re.sub 仅支持 \\1 / \\g<1>，
+    若不转换，「提取括号内容」等预设会在真实重命名时输出字面量 $1。"""
+    if not repl:
+        return repl
+    repl = re.sub(r"\$(\d+)", lambda m: r"\g<%s>" % m.group(1), repl)
+    repl = repl.replace("$&", r"\g<0>")
+    return repl
+
+
 def apply_regex(text, scheme):
     if scheme.get("regex_enabled") and scheme.get("regex_find"):
         if scheme.get("regex_lowercase"):
             text = text.lower()
         try:
             flags = 0 if scheme.get("regex_case_sensitive", True) else re.IGNORECASE
-            text = re.sub(scheme["regex_find"], scheme.get("regex_replace", ""), text, flags=flags)
+            text = re.sub(scheme["regex_find"], _py_replacement(scheme.get("regex_replace", "")), text, flags=flags)
         except re.error:
             pass
     return text
@@ -825,13 +841,14 @@ def ai_content_generate_name(filename, content, cfg):
 
 
 def _ai_content_api_call(prompt, cfg):
-    provider = cfg.get("api_provider") or "OpenAI"
+    # AI 内容命名页独立配置优先，留空时回退到图片识别页的云端配置（兼容旧版）
+    provider = cfg.get("ai_naming_provider") or cfg.get("api_provider") or "OpenAI"
     info = PROVIDERS.get(provider, {})
-    endpoint = (cfg.get("api_endpoint") or "").strip() or info.get("endpoint", "")
-    model = (cfg.get("api_model") or "").strip() or info.get("default_model", "")
-    key = (cfg.get("api_key") or "").strip()
+    endpoint = (cfg.get("ai_naming_endpoint") or cfg.get("api_endpoint") or "").strip() or info.get("endpoint", "")
+    model = (cfg.get("ai_naming_model") or cfg.get("api_model") or "").strip() or info.get("default_model", "")
+    key = (cfg.get("ai_naming_key") or cfg.get("api_key") or "").strip()
     if not endpoint or not model:
-        raise Exception("云端 API 未配置，请先在「图片识别」页填写服务商和 API Key")
+        raise Exception("云端 API 未配置，请先在「AI 内容命名」页填写服务商和 API Key")
     if not key:
         raise Exception("请先填写 API Key")
     try:
@@ -980,10 +997,15 @@ def ollama_recognize(ids, cfg):
     model = (cfg.get("ollama_model") or "").strip()
     if not model:
         raise Exception("Ollama 模型未配置，请先「检测并接入已有模型」")
+    # 前置校验：模型必须支持图片识别，避免 35 张全部失败
+    ok, msg = check_ollama_vision(model, base)
+    if not ok:
+        raise Exception(msg)
     with STATE.lock:
         file_map = dict(STATE.file_map)
     prompt = build_recognition_prompt(cfg)
     results = {}
+    logged_errors = set()
     for fid in ids:
         if STATE.recognize_stop:
             STATE.log("Ollama 识别已被用户停止", "warning")
@@ -1004,7 +1026,13 @@ def ollama_recognize(ids, cfg):
             cat, tags = parse_recognition_content(content, cfg)
             results[fid] = {"category": cat, "tags": tags}
         except Exception as e:
-            results[fid] = {"category": "其他", "tags": [], "error": str(e)}
+            msg = str(e)
+            # 只记录前 3 种不同的错误，避免刷屏
+            key = msg[:120]
+            if key not in logged_errors and len(logged_errors) < 3:
+                logged_errors.add(key)
+                STATE.log(f"Ollama 识别失败（{info['old']}）：{msg[:150]}", "warning")
+            results[fid] = {"category": "其他", "tags": [], "error": msg}
     return results
 
 
@@ -1022,6 +1050,7 @@ def cloud_api_recognize(ids, cfg):
         file_map = dict(STATE.file_map)
     prompt = build_recognition_prompt(cfg)
     results = {}
+    logged_errors = set()
     for fid in ids:
         if STATE.recognize_stop:
             STATE.log("云端 API 识别已被用户停止", "warning")
@@ -1041,7 +1070,12 @@ def cloud_api_recognize(ids, cfg):
             cat, tags = parse_recognition_content(content, cfg)
             results[fid] = {"category": cat, "tags": tags}
         except Exception as e:
-            results[fid] = {"category": "其他", "tags": [], "error": str(e)}
+            msg = str(e)
+            key = msg[:120]
+            if key not in logged_errors and len(logged_errors) < 3:
+                logged_errors.add(key)
+                STATE.log(f"云端 API 识别失败（{info['old']}）：{msg[:150]}", "warning")
+            results[fid] = {"category": "其他", "tags": [], "error": msg}
     return results
 
 
@@ -1254,17 +1288,58 @@ def delete_scheme(name):
 # ============================================================
 # Ollama 检测
 # ============================================================
+def _model_has_vision(name, caps):
+    """判断模型是否支持图片识别：优先信任 Ollama 官方 capabilities 标注；
+    仅当 capabilities 为空（旧版 Ollama 未上报）时才按名称启发式兜底。"""
+    if caps:
+        return "vision" in caps
+    return any(v in name.lower() for v in ("vl", "vision", "minicpm"))
+
+
 def detect_ollama(base=None):
+    """检测 Ollama 模型，返回 (models, vision_models, error)。
+    vision_models 为具备视觉（多模态）能力的模型名列表，仅这些模型可用于图片识别。"""
     base = (base or LOCAL_DEFAULT_BASE).strip().rstrip("/")
-    models = []
+    models, vision_models = [], []
     try:
         req = urllib.request.Request(f"{base}/api/tags", method="GET")
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-        models = [m.get("name", "") for m in data.get("models", [])]
+        for m in data.get("models", []):
+            name = m.get("name", "")
+            if not name:
+                continue
+            models.append(name)
+            caps = m.get("capabilities") or []
+            if _model_has_vision(name, caps):
+                vision_models.append(name)
     except Exception:
-        return [], f"无法连接 Ollama（{base}）"
-    return models, None
+        return [], [], f"无法连接 Ollama（{base}）"
+    return models, vision_models, None
+
+
+def check_ollama_vision(model, base=None):
+    """确认指定 Ollama 模型支持图片识别（vision）。返回 (ok, message)。
+    ok=False 时 message 为可读的中文错误提示。"""
+    base = (base or LOCAL_DEFAULT_BASE).strip().rstrip("/")
+    try:
+        req = urllib.request.Request(f"{base}/api/tags", method="GET")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        found, has_vision = False, False
+        for m in data.get("models", []):
+            if m.get("name", "") == model:
+                found = True
+                has_vision = _model_has_vision(model, m.get("capabilities") or [])
+                break
+        if not found:
+            return False, f"Ollama 中不存在模型「{model}」，请点击「检测并接入已有模型」重新选择"
+        if not has_vision:
+            return False, (f"模型「{model}」不支持图片识别（无 vision 能力）。\n"
+                           f"请选择视觉模型，如 qwen2.5vl、llava 等（检测时会优先列出支持图片的模型）")
+        return True, ""
+    except Exception as e:
+        return False, f"无法连接 Ollama（{base}）：{e}"
 
 
 # ============================================================
@@ -1590,8 +1665,8 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.log("AI 配置已保存", "success")
                 json_resp(self, {"ok": True, "config": load_ai_config()})
             elif path == "/api/ai/detect-ollama":
-                models, err = detect_ollama(data.get("base"))
-                json_resp(self, {"models": models, "error": err})
+                models, vision_models, err = detect_ollama(data.get("base"))
+                json_resp(self, {"models": models, "vision_models": vision_models, "error": err})
             elif path == "/api/ai/naming":
                 self._handle_ai_naming(data)
             elif path == "/api/ai/test":
@@ -1711,15 +1786,23 @@ class Handler(BaseHTTPRequestHandler):
             json_resp(self, {"error": str(e)}, 500)
 
     def _handle_test_api(self, data):
-        """测试云端 API 连接（支持前端实时表单配置覆盖）"""
+        """测试云端 API 连接（支持前端实时表单配置覆盖）。
+        scope=ai_naming 时测试「AI 内容命名」页独立配置，否则测试「图片识别」页配置。"""
         cfg = load_ai_config()
         if data.get("config"):
             cfg.update(data.get("config"))
-        provider = cfg.get("api_provider") or "OpenAI"
-        info = PROVIDERS.get(provider, {})
-        endpoint = (cfg.get("api_endpoint") or "").strip() or info.get("endpoint", "")
-        model = (cfg.get("api_model") or "").strip()
-        key = (cfg.get("api_key") or "").strip()
+        if data.get("scope") == "ai_naming":
+            provider = cfg.get("ai_naming_provider") or cfg.get("api_provider") or "OpenAI"
+            info = PROVIDERS.get(provider, {})
+            endpoint = (cfg.get("ai_naming_endpoint") or cfg.get("api_endpoint") or "").strip() or info.get("endpoint", "")
+            model = (cfg.get("ai_naming_model") or cfg.get("api_model") or "").strip()
+            key = (cfg.get("ai_naming_key") or cfg.get("api_key") or "").strip()
+        else:
+            provider = cfg.get("api_provider") or "OpenAI"
+            info = PROVIDERS.get(provider, {})
+            endpoint = (cfg.get("api_endpoint") or "").strip() or info.get("endpoint", "")
+            model = (cfg.get("api_model") or "").strip()
+            key = (cfg.get("api_key") or "").strip()
         if not endpoint or not model:
             json_resp(self, {"ok": False, "message": "请先配置服务商和模型"})
             return

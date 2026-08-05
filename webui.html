@@ -655,10 +655,10 @@ td .diff{color:var(--warn)}
               </select>
             </div>
             <div class="regex-presets">
-              <span class="chip active">去数字</span>
-              <span class="chip">空格→下划线</span>
-              <span class="chip">提取括号</span>
-              <span class="chip">去前导零</span>
+              <span class="chip active" data-preset="digits" onclick="applyRegexPreset('digits')">去数字</span>
+              <span class="chip" data-preset="spaces" onclick="applyRegexPreset('spaces')">空格→下划线</span>
+              <span class="chip" data-preset="extract" onclick="applyRegexPreset('extract')">提取括号</span>
+              <span class="chip" data-preset="leading" onclick="applyRegexPreset('leading')">去前导零</span>
             </div>
             <div class="row" style="margin-bottom:10px">
               <span class="field-label" style="margin:0;width:64px">查找内容：</span>
@@ -867,6 +867,7 @@ td .diff{color:var(--warn)}
               </div>
               <div class="row">
                 <button class="btn sm" onclick="testAiApi()">🔗 测试连接</button>
+                <button class="btn sm" onclick="saveAiConfig()">💾 保存本页设置</button>
                 <span class="count-badge" id="aiApiTestResult"></span>
               </div>
             </div>
@@ -1741,10 +1742,20 @@ function applyRegexPreset(v){
 }
 function regexLive(){
   const f=$("regexFind").value.trim(), r=$("regexReplace").value;
+  // 同步预设高亮：查找内容与某预设完全一致时高亮对应 chip
+  const presetMap={digits:["\\d+",""],spaces:["\\s+","_"],extract:["\\(([^)]*)\\)","$1"],leading:["^0+",""]};
+  let matched=null;
+  Object.keys(presetMap).forEach(k=>{ if(presetMap[k][0]===f) matched=k; });
+  document.querySelectorAll(".regex-presets .chip").forEach(c=>{
+    c.classList.toggle("active", c.dataset.preset===matched);
+  });
   if(!f){ $("regexResult").textContent="→ 未启用正则（输入查找内容后生效）"; return; }
-  let out="IMG_0012.jpg";
+  // 用当前列表第一个勾选文件的原文件名做实时预览（与真实重命名结果一致）
+  const sample=files.find(x=>x.checked&&!x._is_folder);
+  let out=((sample&&sample.old)||"IMG_0012.jpg").replace(/\.[^.]+$/,"");
   try{
-    out=out.replace(new RegExp(f,$("regexCase").checked?"":"i"),r);
+    // 加 g 标志：全部替换，与后端 Python re.sub 行为一致
+    out=out.replace(new RegExp(f,$("regexCase").checked?"g":"ig"),r);
   }catch(e){ out="正则语法错误"; }
   $("regexResult").textContent="→ "+out;
 }
@@ -1780,13 +1791,12 @@ function collectAiConfig(){
     local_api_base:$("localApiBase").value,
     local_temperature:parseFloat($("localTemp").value||"0.7"),
     local_max_tokens:parseInt($("localMaxTokens").value||"512",10),
+    // AI 内容命名页独立云端配置（与图片识别页互不影响）
+    ai_naming_provider:$("aiApiProvider")?$("aiApiProvider").value:"",
+    ai_naming_key:$("aiApiKey")?$("aiApiKey").value:"",
+    ai_naming_model:$("aiApiModel")?$("aiApiModel").value:"",
+    ai_naming_endpoint:$("aiApiEndpoint")?$("aiApiEndpoint").value:"",
   };
-  // AI 内容命名页的云端配置优先（独立字段），否则回退识别页配置
-  const aiProv=$("aiApiProvider")?$("aiApiProvider").value:"";
-  if(aiProv){ cfg.api_provider=aiProv; }
-  if($("aiApiKey")&&$("aiApiKey").value){ cfg.api_key=$("aiApiKey").value; }
-  if($("aiApiModel")&&$("aiApiModel").value){ cfg.api_model=$("aiApiModel").value; }
-  if($("aiApiEndpoint")&&$("aiApiEndpoint").value){ cfg.api_endpoint=$("aiApiEndpoint").value; }
   return cfg;
 }
 function applyAiConfigToUI(){
@@ -1825,14 +1835,16 @@ function applyAiConfigToUI(){
     $("localModel").value=aiCfg.local_model||"";
     $("localTemp").value=aiCfg.local_temperature||0.7;
     if($("localMaxTokens")) $("localMaxTokens").value=aiCfg.local_max_tokens||512;
-    // AI 内容命名页云端配置：默认与识别页共享
+    // AI 内容命名页云端配置：独立存储（留空时回退到识别页配置，兼容旧版）
     if($("aiApiProvider")){
       fillProviderSelect($("aiApiProvider"));
-      $("aiApiProvider").value=(aiCfg.api_provider&&Object.keys(window._providers||{}).includes(aiCfg.api_provider))?aiCfg.api_provider:(Object.keys(window._providers||{})[0]||"");
+      const names=Object.keys(window._providers||{});
+      const prov=aiCfg.ai_naming_provider||aiCfg.api_provider||names[0]||"";
+      $("aiApiProvider").value=names.includes(prov)?prov:(names[0]||"");
       onAiProviderChange();
-      $("aiApiKey").value=aiCfg.api_key||"";
-      $("aiApiModel").value=aiCfg.api_model||"";
-      $("aiApiEndpoint").value=aiCfg.api_endpoint||"";
+      $("aiApiKey").value=aiCfg.ai_naming_key||aiCfg.api_key||"";
+      $("aiApiModel").value=aiCfg.ai_naming_model||aiCfg.api_model||"";
+      $("aiApiEndpoint").value=aiCfg.ai_naming_endpoint||aiCfg.api_endpoint||"";
     }
     setRecMode(aiCfg.recognition_mode||"rule");
     setAiContentMode(aiCfg.ai_content_mode||"云端API");
@@ -1871,13 +1883,14 @@ async function testAiApi(){
   const r=$("aiApiTestResult");
   r.textContent="测试中…";
   try{
-    // 用 AI 内容命名页的配置构造测试请求
-    const cfg=collectAiConfig();
-    cfg.api_provider=$("aiApiProvider").value;
-    cfg.api_key=$("aiApiKey").value;
-    cfg.api_model=$("aiApiModel").value;
-    cfg.api_endpoint=$("aiApiEndpoint").value;
-    const d=await api("/ai/test","POST",{config:cfg});
+    // 用 AI 内容命名页独立配置构造测试请求（scope 告知后端读取 ai_naming_* 字段）
+    const cfg={
+      ai_naming_provider:$("aiApiProvider").value,
+      ai_naming_key:$("aiApiKey").value,
+      ai_naming_model:$("aiApiModel").value,
+      ai_naming_endpoint:$("aiApiEndpoint").value,
+    };
+    const d=await api("/ai/test","POST",{config:cfg,scope:"ai_naming"});
     r.textContent=d.message||"";
     r.style.color=d.ok?"var(--ok)":"var(--err)";
   }catch(e){ r.textContent="失败："+e.message; r.style.color="var(--err)"; }
@@ -1892,8 +1905,8 @@ async function testApi(){
   const r=document.getElementById("apiTestResult");
   r.textContent="测试中…";
   try{
-    // 传当前表单实时配置，避免用旧保存值
-    const d=await api("/ai/test","POST",{config:collectAiConfig()});
+    // 传当前表单实时配置，避免用旧保存值；scope 固定为识别页
+    const d=await api("/ai/test","POST",{config:collectAiConfig(),scope:"recognition"});
     r.textContent=d.message||"";
     r.style.color=d.ok?"var(--ok)":"var(--err)";
   }catch(e){ r.textContent="失败："+e.message; r.style.color="var(--err)"; }
@@ -1905,15 +1918,28 @@ async function detectOllama(){
     const d=await api("/ai/detect-ollama","POST",{base:$("ollamaBase").value});
     const sel=$("ollamaModel");
     sel.innerHTML="";
-    if(d.models&&d.models.length){
-      (d.models||[]).forEach(m=>{
+    // 记录各模型是否支持图片识别，供开始识别时校验
+    const visionSet=new Set(d.vision_models||[]);
+    window._ollamaVision=visionSet;
+    const all=d.models||[];
+    if(all.length){
+      // 视觉模型优先排在前面
+      const vision=all.filter(m=>visionSet.has(m));
+      const text=all.filter(m=>!visionSet.has(m));
+      const ordered=[...vision,...text];
+      ordered.forEach(m=>{
         const opt=document.createElement("option");
-        opt.value=m; opt.textContent=m;
+        opt.value=m; opt.textContent=visionSet.has(m)?`${m}（支持图片）`:m;
         sel.appendChild(opt);
       });
-      r.textContent=`发现 ${d.models.length} 个模型`;
-      r.style.color="var(--ok)";
-      aiCfg.ollama_model=d.models[0];
+      // 默认选中第一个支持图片的模型
+      const pick=vision[0]||ordered[0];
+      sel.value=pick;
+      aiCfg.ollama_model=pick;
+      r.textContent=vision.length
+        ?`发现 ${all.length} 个模型（${vision.length} 个支持图片）`
+        :`发现 ${all.length} 个模型，但均不支持图片识别，请安装 qwen2.5vl / llava 等视觉模型`;
+      r.style.color=vision.length?"var(--ok)":"var(--err)";
     }else{
       r.textContent=d.error||"未发现模型";
       r.style.color="var(--err)";
@@ -1982,7 +2008,15 @@ async function runRecognition(){
   const cfg=collectAiConfig();
   const mode=cfg.recognition_mode;
   if(mode==="api"&&!cfg.api_key){ toast("请先填写 API Key（云端模式）"); return; }
-  if(mode==="ollama"&&!cfg.ollama_model){ toast("请先检测并选择 Ollama 模型"); return; }
+  if(mode==="ollama"){
+    if(!cfg.ollama_model){ toast("请先检测并选择 Ollama 模型"); return; }
+    // 若已检测过模型列表，校验所选模型是否支持图片
+    const vs=window._ollamaVision;
+    if(vs&&vs.size&&!vs.has(cfg.ollama_model)){
+      toast("所选模型不支持图片识别，请选择带「（支持图片）」标注的视觉模型（如 qwen2.5vl）");
+      return;
+    }
+  }
   // 多标签设置进入配置
   if($("useMultiTags")&&$("useMultiTags").checked){
     cfg.use_multiple_tags=true;
@@ -2144,7 +2178,7 @@ async function startAiNaming(){
   const ids=files.filter(f=>f.checked&&!f._is_folder).map(f=>f.id);
   if(!ids.length){ toast("请先加载并勾选文件"); return; }
   const cfg=collectAiConfig();
-  if(cfg.ai_content_mode==="云端API"&&!cfg.api_key){ toast("云端模式需要先填写 API Key（本页上方）"); return; }
+  if(cfg.ai_content_mode==="云端API"&&!(cfg.ai_naming_key||cfg.api_key)){ toast("云端模式需要先填写 API Key（本页上方）"); return; }
   if(cfg.ai_content_mode==="本地Ollama"&&!cfg.local_model){ toast("本地模式需要先选择模型"); return; }
   setBar("AI 正在生成文件名…",8);
   try{
