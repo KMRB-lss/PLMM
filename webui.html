@@ -1655,7 +1655,15 @@ function setBar(text, pct){
   $("mainStatus").textContent=text;
   if(pct===100){ bar.style.transition="width .3s ease"; }
 }
+function currentTab(){
+  const t=document.querySelector(".tab.active");
+  return t?t.dataset.tab:"basic";
+}
 async function generatePreview(){
+  // 预览按钮随当前标签页变化：AI 内容命名页生成 AI 预览，其余页生成规则预览
+  if(currentTab()==="ai"){
+    return startAiNaming();
+  }
   const ids=files.filter(f=>f.checked).map(f=>f.id);
   if(!ids.length){ toast("请先勾选文件"); return; }
   setBar("正在生成预览…",8);
@@ -1683,7 +1691,21 @@ async function startRename(){
   if($("stopRenameBtn")) $("stopRenameBtn").disabled=false;
   setBar("正在重命名…",8);
   try{
-    const s=await api("/rename","POST",{ids,scheme:getScheme()});
+    let payload={ids,scheme:getScheme()};
+    // AI 内容命名页：按已生成的 AI 名字重命名（而非重新按规则计算）
+    if(currentTab()==="ai"){
+      const names={};
+      files.forEach(f=>{ if(f.checked&&f.new) names[f.id]=f.new; });
+      const pending=ids.filter(id=>!names[id]);
+      if(pending.length){
+        renaming=false;
+        if($("stopRenameBtn")) $("stopRenameBtn").disabled=true;
+        toast(`有 ${pending.length} 个勾选文件还没有 AI 生成的名字，请先点「🤖 开始生成 AI 文件名」`);
+        return;
+      }
+      payload={ids,scheme:{fixed_names:names}};
+    }
+    const s=await api("/rename","POST",payload);
     // 用后端逐文件结果精确更新状态，不再重载（避免状态丢失）
     const r=s.results||{};
     files.forEach(f=>{
@@ -1721,6 +1743,12 @@ async function stopRename(){
   }catch(e){ toast("停止失败："+e.message); }
 }
 async function refreshPreview(){
+  // AI 内容命名页：AI 结果已定稿，刷新不覆盖（提示重新生成）
+  if(currentTab()==="ai"){
+    const has=files.some(f=>f.checked&&f.new);
+    toast(has?"AI 命名结果已就绪，如需重新生成请点「🤖 开始生成 AI 文件名」":"还没有 AI 命名结果，请先点「🤖 开始生成 AI 文件名」");
+    return;
+  }
   const ids=files.filter(f=>f.checked).map(f=>f.id);
   if(!ids.length){ toast("请先勾选文件"); return; }
   try{

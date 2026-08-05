@@ -654,7 +654,19 @@ def perform_undo():
 
 
 def perform_rename(ids, scheme):
-    preview = compute_preview(ids, scheme)
+    fixed_names = (scheme or {}).get("fixed_names") or {}
+    # AI 命名结果直通模式：使用前端已定稿的目标名，不再按规则重新计算
+    if fixed_names:
+        preview = {}
+        for _fid, _name in fixed_names.items():
+            try:
+                _fid = int(_fid)
+            except (TypeError, ValueError):
+                pass
+            if _name:
+                preview[_fid] = {"new": _name}
+    else:
+        preview = compute_preview(ids, scheme)
     stats = {"total": len(ids), "success": 0, "failed": 0, "skipped": 0, "stopped": False}
     results = {}  # fid -> {"status": "成功"|"失败"|"跳过", "old":…, "new":…}
     operations = []
