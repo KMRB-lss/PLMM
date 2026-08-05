@@ -159,7 +159,10 @@ DEFAULT_AI_CONFIG = {
     "max_concurrent": 2,
     # AI 内容命名
     "ai_content_mode": "云端API",          # 云端API / 本地Ollama
-    "ai_content_prompt": "请根据以下内容为文件生成简短文件名（不超过15字，只返回文件名本身，不要扩展名）。\n文件: {filename}\n内容: {content}",
+    "ai_content_prompt": "你是一个文件命名助手。请为下面的文件或文件夹生成一个简洁贴切的新名字（建议8-15字，中文优先）。\n"
+                         "判断依据：如果「内容或清单」是正文，则为文件起名；如果内容是「文件夹内文件清单」，则为文件夹起名。\n"
+                         "原名称: {filename}\n内容或清单: {content}\n"
+                         "只返回新名字本身，不要扩展名、编号、解释或引号。",
     "ai_content_limit": "auto",           # auto / 500 / 1000 / 2000 / 5000
     "ai_batch_opt": "batch",              # single / batch
     # AI 内容命名页独立云端配置（与图片识别页互不影响，留空时回退到 api_*）
@@ -407,6 +410,8 @@ class AppState:
         self.recognizing = False      # 是否正在识别
         self.rename_stop = False      # 停止重命名标志
         self.renaming = False         # 是否正在重命名
+        self.ai_naming_stop = False   # 停止 AI 内容命名标志
+        self.ai_naming = False        # 是否正在 AI 内容命名
 
     def log(self, msg, level="info"):
         """记录操作日志：内存(500条) + 持久化到 data/logs/web.log"""
@@ -915,41 +920,52 @@ def ai_content_batch_call(batch, cfg):
 
 
 def run_ai_naming(ids, cfg):
-    """AI 内容命名主入口：返回 {id: new_name}"""
+    """AI 内容命名主入口：返回 {results, err, stopped}，支持中途停止"""
     with STATE.lock:
         file_map = dict(STATE.file_map)
-    limit_map = {"auto": 2000, "500": 500, "1000": 1000, "2000": 2000, "5000": 5000}
-    limit = limit_map.get(cfg.get("ai_content_limit", "auto"), 2000)
-    batch_opt = cfg.get("ai_batch_opt", "batch")
-    batch = []
-    for fid in ids:
-        info = file_map.get(fid)
-        if not info:
-            continue
-        full = os.path.join(info["folder"], info["old"])
-        if info.get("_is_folder") or os.path.isdir(full):
-            content = read_folder_content(full)
-        else:
-            content = read_document_content(full)
-        batch.append({"fid": fid, "old": info["old"], "content": (content or "")[:limit]})
-    if not batch:
-        return {}, "没有可处理的文件"
-    results = {}
-    if batch_opt == "batch" and len(batch) > 1:
-        names = ai_content_batch_call(batch, cfg)
-        for b, new_name in zip(batch, names):
-            if new_name:
-                results[b["fid"]] = ensure_extension(new_name, b["old"])
-    else:
-        for b in batch:
-            try:
-                raw = ai_content_generate_name(b["old"], b["content"], cfg)
-                new_name = clean_ai_filename(raw)
+    STATE.ai_naming_stop = False
+    STATE.ai_naming = True
+    try:
+        limit_map = {"auto": 2000, "500": 500, "1000": 1000, "2000": 2000, "5000": 5000}
+        limit = limit_map.get(cfg.get("ai_content_limit", "auto"), 2000)
+        batch_opt = cfg.get("ai_batch_opt", "batch")
+        batch = []
+        for fid in ids:
+            info = file_map.get(fid)
+            if not info:
+                continue
+            full = os.path.join(info["folder"], info["old"])
+            if info.get("_is_folder") or os.path.isdir(full):
+                content = read_folder_content(full)
+            else:
+                content = read_document_content(full)
+            batch.append({"fid": fid, "old": info["old"], "content": (content or "")[:limit]})
+        if not batch:
+            return {}, "没有可处理的文件", False
+        results = {}
+        if batch_opt == "batch" and len(batch) > 1:
+            if STATE.ai_naming_stop:
+                STATE.log("AI 内容命名已被用户停止", "warning")
+                return results, None, True
+            names = ai_content_batch_call(batch, cfg)
+            for b, new_name in zip(batch, names):
                 if new_name:
                     results[b["fid"]] = ensure_extension(new_name, b["old"])
-            except Exception as e:
-                results[b["fid"]] = f"__ERR__:{e}"
-    return results, None
+        else:
+            for b in batch:
+                if STATE.ai_naming_stop:
+                    STATE.log("AI 内容命名已被用户停止", "warning")
+                    break
+                try:
+                    raw = ai_content_generate_name(b["old"], b["content"], cfg)
+                    new_name = clean_ai_filename(raw)
+                    if new_name:
+                        results[b["fid"]] = ensure_extension(new_name, b["old"])
+                except Exception as e:
+                    results[b["fid"]] = f"__ERR__:{e}"
+        return results, None, STATE.ai_naming_stop
+    finally:
+        STATE.ai_naming = False
 
 
 # ============================================================
@@ -1683,6 +1699,10 @@ class Handler(BaseHTTPRequestHandler):
                 json_resp(self, {"models": models, "vision_models": vision_models, "error": err})
             elif path == "/api/ai/naming":
                 self._handle_ai_naming(data)
+            elif path == "/api/ai/naming/stop":
+                STATE.ai_naming_stop = True
+                STATE.log("已请求停止 AI 内容命名", "warning")
+                json_resp(self, {"ok": True, "ai_naming": STATE.ai_naming})
             elif path == "/api/ai/test":
                 self._handle_test_api(data)
             else:
@@ -1789,12 +1809,17 @@ class Handler(BaseHTTPRequestHandler):
         if data.get("config"):
             cfg.update(data.get("config"))
         try:
-            results, err = run_ai_naming(ids, cfg)
+            results, err, stopped = run_ai_naming(ids, cfg)
             if err:
                 json_resp(self, {"error": err}, 400)
                 return
-            STATE.log(f"AI 内容命名完成：{len(results)} 个文件")
-            json_resp(self, {"results": results})
+            ok = sum(1 for v in results.values() if v and not str(v).startswith("__ERR__"))
+            errs = [str(v).split(":", 1)[1] if ":" in str(v) else str(v)
+                    for v in results.values() if str(v).startswith("__ERR__")]
+            STATE.log(f"AI 内容命名完成：{ok} 个成功" + (f"，{len(errs)} 个失败" if errs else "") +
+                      ("（已停止）" if stopped else ""))
+            json_resp(self, {"results": results, "stopped": stopped,
+                             "failed": len(errs), "error_detail": (errs[0] if errs else None)})
         except Exception as e:
             traceback.print_exc()
             json_resp(self, {"error": str(e)}, 500)

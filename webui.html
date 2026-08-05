@@ -851,6 +851,7 @@ td .diff{color:var(--warn)}
               </div>
               <span style="flex:1"></span>
               <button class="btn primary" onclick="startAiNaming()">🤖 开始生成 AI 文件名</button>
+              <button class="btn" id="stopAiBtn" onclick="stopAiNaming()" disabled>⏹ 停止生成</button>
             </div>
 
             <div id="aiContentApiCfg" style="display:none">
@@ -891,7 +892,7 @@ td .diff{color:var(--warn)}
 
             <label class="field-label">提示词（{filename}/{content} 为占位符）</label>
             <textarea class="input" id="aiContentPrompt" style="width:100%;resize:vertical;min-height:100px;font-size:12.5px"
-              placeholder="请根据以下内容为文件生成文件名，只返回文件名（不含扩展名）……">请根据以下内容为文件生成简短文件名（不超过15字，只返回文件名本身，不要扩展名）。&#10;文件: {filename}&#10;内容: {content}</textarea>
+              placeholder="请根据以下内容为文件生成文件名，只返回文件名（不含扩展名）……">你是一个文件命名助手。请为下面的文件或文件夹生成一个简洁贴切的新名字（建议8-15字，中文优先）。&#10;判断依据：如果「内容或清单」是正文，则为文件起名；如果内容是「文件夹内文件清单」，则为文件夹起名。&#10;原名称: {filename}&#10;内容或清单: {content}&#10;只返回新名字本身，不要扩展名、编号、解释或引号。</textarea>
             <div class="rules-grid" style="margin-top:12px">
               <div class="rule-item"><label class="field-label">内容长度限制</label>
                 <select class="select" id="aiContentLimit">
@@ -1839,13 +1840,23 @@ function applyAiConfigToUI(){
     $("freeStyle").value=aiCfg.free_style||"图片描述";
     $("batchSize").value=aiCfg.batch_size||8;
     $("maxConcurrent").value=aiCfg.max_concurrent||2;
-    $("aiContentPrompt").value=aiCfg.ai_content_prompt||"";
+    // 提示词：旧版默认值自动升级为新版（区分文件/文件夹）
+    const OLD_PROMPT="请根据以下内容为文件生成简短文件名（不超过15字，只返回文件名本身，不要扩展名）。\n文件: {filename}\n内容: {content}";
+    const NEW_PROMPT="你是一个文件命名助手。请为下面的文件或文件夹生成一个简洁贴切的新名字（建议8-15字，中文优先）。\n判断依据：如果「内容或清单」是正文，则为文件起名；如果内容是「文件夹内文件清单」，则为文件夹起名。\n原名称: {filename}\n内容或清单: {content}\n只返回新名字本身，不要扩展名、编号、解释或引号。";
+    let aiP=aiCfg.ai_content_prompt||NEW_PROMPT;
+    if(aiP===OLD_PROMPT) aiP=NEW_PROMPT;
+    $("aiContentPrompt").value=aiP;
     $("aiContentLimit").value=aiCfg.ai_content_limit||"auto";
     $("aiBatchOpt").value=aiCfg.ai_batch_opt||"batch";
     $("localApiBase").value=aiCfg.local_api_base||"http://localhost:11434";
     $("localModel").value=aiCfg.local_model||"";
     $("localTemp").value=aiCfg.local_temperature||0.7;
     if($("localMaxTokens")) $("localMaxTokens").value=aiCfg.local_max_tokens||512;
+    // 本地 Ollama 模式但未选模型：自动检测一次并选中，避免「生成为空」
+    if(aiCfg.ai_content_mode==="本地Ollama"&&!aiCfg.local_model&&!window._autoLocalDetected){
+      window._autoLocalDetected=true;
+      detectOllamaForAi();
+    }
     // AI 内容命名页云端配置：独立存储（留空时回退到识别页配置，兼容旧版）
     if($("aiApiProvider")){
       fillProviderSelect($("aiApiProvider"));
@@ -1970,7 +1981,10 @@ async function detectOllamaForAi(){
         opt.value=m; opt.textContent=m;
         sel.appendChild(opt);
       });
-      r.textContent=`发现 ${d.models.length} 个模型`;
+      // 自动选中第一个模型并同步到 aiCfg，保证 collectAiConfig 能读到
+      sel.value=d.models[0];
+      aiCfg.local_model=d.models[0];
+      r.textContent=`已自动选择 ${d.models[0]}`;
       r.style.color="var(--ok)";
     }else{
       r.textContent=d.error||"未发现模型";
@@ -2186,27 +2200,48 @@ function setAiContentMode(mode){
   $("aiContentApiCfg").style.display=isLocal?"none":"";
 }
 async function startAiNaming(){
-  const ids=files.filter(f=>f.checked&&!f._is_folder).map(f=>f.id);
-  if(!ids.length){ toast("请先加载并勾选文件"); return; }
+  // 文件与文件夹均可生成名字：文件按内容、文件夹按其内文件清单
+  const ids=files.filter(f=>f.checked).map(f=>f.id);
+  if(!ids.length){ toast("请先加载并勾选文件或文件夹"); return; }
   const cfg=collectAiConfig();
   if(cfg.ai_content_mode==="云端API"&&!(cfg.ai_naming_key||cfg.api_key)){ toast("云端模式需要先填写 API Key（本页上方）"); return; }
-  if(cfg.ai_content_mode==="本地Ollama"&&!cfg.local_model){ toast("本地模式需要先选择模型"); return; }
+  if(cfg.ai_content_mode==="本地Ollama"&&!cfg.local_model){ toast("本地模式需要先选择模型（点击「检测本地模型」）"); return; }
+  window._aiNamingRunning=true;
+  if($("stopAiBtn")) $("stopAiBtn").disabled=false;
   setBar("AI 正在生成文件名…",8);
   try{
     const d=await api("/ai/naming","POST",{ids,config:cfg});
     const r=d.results||{};
-    let ok=0;
+    let ok=0, failed=0, errMsg=null;
     files.forEach(f=>{
       const v=r[f.id];
-      if(v&&!String(v).startsWith("__ERR__")){ f.new=v; f.status="待处理"; f.scheme=$("selScheme")?$("selScheme").value:null; f.tag="pending"; ok++; }
+      if(v===undefined) return;
+      if(String(v).startsWith("__ERR__")){
+        failed++;
+        if(!errMsg) errMsg=String(v).slice(7);
+        f.status="失败"; f.tag="err"; f.new="";
+      }else if(v){
+        f.new=v; f.status="待处理"; f.scheme=$("selScheme")?$("selScheme").value:null; f.tag="pending"; ok++;
+      }
     });
     renderTable();
-    setBar(`AI 命名完成：${ok} 个文件`,100);
-    toast(`已为 ${ok} 个文件生成新文件名`);
+    const stopped=d.stopped?" · 已停止":"";
+    setBar(`AI 命名完成：${ok} 个成功${failed?` · ${failed} 个失败`:""}${stopped}`,100);
+    const base=failed?(`${failed} 个失败：${errMsg||"原因未知"}`):`已为 ${ok} 个文件生成新文件名`;
+    toast(base+(stopped?"（已停止）":""));
   }catch(e){
     setBar("AI 命名失败",0);
     toast("AI 命名失败："+e.message);
   }
+  window._aiNamingRunning=false;
+  if($("stopAiBtn")) $("stopAiBtn").disabled=true;
+}
+async function stopAiNaming(){
+  try{
+    await api("/ai/naming/stop","POST",{});
+    setBar("正在停止 AI 命名…",8);
+    toast("已请求停止 AI 命名");
+  }catch(e){ toast("停止失败："+e.message); }
 }
 
 /* ================= 方案管理 ================= */
