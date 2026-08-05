@@ -635,19 +635,23 @@ def compute_preview(ids, scheme):
             if add_replace_on and add_text:
                 new_base = f"{add_text}_{new_base}" if scheme.get("add_position") == "前" else f"{new_base}_{add_text}"
             # 查找替换：作用于基础名（受「添加&替换」开关控制）
-            # find_mode：包含 / 开头是 / 结尾是（默认包含，兼容旧行为）
+            # find_mode：包含（替换所有出现）/ 开头是（文件名以目标开头，只替换靠前的第一个）/ 结尾是（文件名以目标结尾，只替换靠后的最后一个）
             find_text = (scheme.get("find_text") or "").strip()
             if add_replace_on and find_text:
                 fmode = scheme.get("find_mode") or "包含"
-                matched = False
+                repl = scheme.get("replace_text", "")
                 if fmode == "开头是":
-                    matched = new_base.startswith(find_text)
+                    if new_base.startswith(find_text):
+                        # 文件名以目标开头：仅替换第一个（靠前）出现，其余保留
+                        new_base = new_base.replace(find_text, repl, 1)
                 elif fmode == "结尾是":
-                    matched = new_base.endswith(find_text)
+                    if new_base.endswith(find_text):
+                        # 文件名以目标结尾：仅替换最后一个（靠后）出现，其余保留
+                        idx = new_base.rfind(find_text)
+                        new_base = new_base[:idx] + repl + new_base[idx + len(find_text):]
                 else:
-                    matched = find_text in new_base
-                if matched:
-                    new_base = new_base.replace(find_text, scheme.get("replace_text", ""))
+                    if find_text in new_base:
+                        new_base = new_base.replace(find_text, repl)
 
             new_base = apply_regex(new_base, scheme)
             new_base = sanitize_filename(new_base) or "文件"

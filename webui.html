@@ -637,7 +637,7 @@ td .diff{color:var(--warn)}
               </div>
               <div class="row">
                 <span class="field-label" style="margin:0">查找：</span>
-                <select class="select" style="width:76px" id="findMode" onchange="livePreview()" title="查找方式">
+                <select class="select" style="width:76px" id="findMode" onchange="livePreview()" title="包含=替换所有出现；开头是=仅替换开头（靠前）那个；结尾是=仅替换结尾（靠后）那个">
                   <option value="包含">包含</option>
                   <option value="开头是">开头是</option>
                   <option value="结尾是">结尾是</option>
@@ -1186,7 +1186,7 @@ td .diff{color:var(--warn)}
         <h4>🔧 高级功能</h4>
         <ul>
           <li><b>添加内容</b>：在文件名前/后统一插入文字（受「添加&替换」开关控制）</li>
-          <li><b>查找替换</b>：批量替换文件名中的指定文字，支持「包含 / 开头是 / 结尾是」三种查找方式，替换更精准（受「添加&替换」开关控制）</li>
+          <li><b>查找替换</b>：批量替换文件名中的指定文字，三种查找方式：<b>包含</b>（替换所有出现）、<b>开头是</b>（文件名以目标开头，仅替换靠前的那个）、<b>结尾是</b>（文件名以目标结尾，仅替换靠后的那个）</li>
           <li><b>正则替换</b>：在「正则替换」页使用正则表达式（留空即不启用），如 `\d+` 去除数字、`\s+` 空格转下划线</li>
           <li><b>模板管理</b>：保存/加载常用规则模板，模板存储于 `data/templates/`</li>
           <li><b>导出 Excel</b>：将重命名清单导出为 xlsx（原文件名/新文件名/状态/分类/所在文件夹）</li>
