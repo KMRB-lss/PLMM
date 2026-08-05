@@ -5,3 +5,8 @@ openpyxl>=3.1.2
 Pillow>=10.0.0
 # 进度条
 tqdm>=4.64.0
+# 文档内容提取（AI 内容命名：读取文件正文）
+python-docx>=1.1.0
+python-pptx>=1.0.0
+pymupdf>=1.24.0
+pdfminer.six>=20231228
