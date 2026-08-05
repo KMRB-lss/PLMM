@@ -340,7 +340,12 @@ def build_new_name(scheme, index, meta=None, force_numbering=False):
     mode = scheme.get("mode", "prefix_num")
     numbering_on = force_numbering or bool(scheme.get("numbering_on", True))
     num = int(scheme.get("start_num", 1)) + index
-    padded = str(num).zfill(int(scheme.get("pad_width", 2)))
+    try:
+        pad = int(scheme.get("pad_width") or 2) or 2
+    except (TypeError, ValueError):
+        pad = 2
+    pad = min(20, max(1, pad))  # 可自定义 1-20 位
+    padded = str(num).zfill(pad)
     prefix = replace_meta_placeholders(str(scheme.get("prefix", "文件") or "文件"), meta, index=index)
     suffix_raw = replace_meta_placeholders(str(scheme.get("suffix", "") or ""), meta, index=index)
     prefix = prefix.replace("{编号}", padded)
@@ -586,7 +591,12 @@ def compute_preview(ids, scheme):
                 key = cat
                 scheme_indices.setdefault(key, 0)
                 num = int(scheme.get("start_num", 1)) + scheme_indices[key]
-                padded = str(num).zfill(int(scheme.get("pad_width", 2)))
+                try:
+                    pad = int(scheme.get("pad_width") or 2) or 2
+                except (TypeError, ValueError):
+                    pad = 2
+                pad = min(20, max(1, pad))
+                padded = str(num).zfill(pad)
                 new_base = f"{cat}_{padded}"
                 scheme_indices[key] += 1
             # 按扩展名分组编号：同一扩展名使用连续编号（「按扩展名编号」为独立选项，不受编号开关影响）
