@@ -632,9 +632,19 @@ def compute_preview(ids, scheme):
             if add_replace_on and add_text:
                 new_base = f"{add_text}_{new_base}" if scheme.get("add_position") == "前" else f"{new_base}_{add_text}"
             # 查找替换：作用于基础名（受「添加&替换」开关控制）
+            # find_mode：包含 / 开头是 / 结尾是（默认包含，兼容旧行为）
             find_text = (scheme.get("find_text") or "").strip()
-            if add_replace_on and find_text and find_text in new_base:
-                new_base = new_base.replace(find_text, scheme.get("replace_text", ""))
+            if add_replace_on and find_text:
+                fmode = scheme.get("find_mode") or "包含"
+                matched = False
+                if fmode == "开头是":
+                    matched = new_base.startswith(find_text)
+                elif fmode == "结尾是":
+                    matched = new_base.endswith(find_text)
+                else:
+                    matched = find_text in new_base
+                if matched:
+                    new_base = new_base.replace(find_text, scheme.get("replace_text", ""))
 
             new_base = apply_regex(new_base, scheme)
             new_base = sanitize_filename(new_base) or "文件"
