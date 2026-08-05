@@ -412,6 +412,8 @@ class AppState:
         self.renaming = False         # 是否正在重命名
         self.ai_naming_stop = False   # 停止 AI 内容命名标志
         self.ai_naming = False        # 是否正在 AI 内容命名
+        self.ai_naming_total = 0      # AI 命名总数（用于进度）
+        self.ai_naming_done = 0       # AI 命名已完成数
 
     def log(self, msg, level="info"):
         """记录操作日志：内存(500条) + 持久化到 data/logs/web.log"""
@@ -891,6 +893,8 @@ def _ai_content_local_call(prompt, cfg):
 
 
 def ai_content_batch_call(batch, cfg):
+    """批量调用模型为一批文件生成名字，返回 {index: name}（index 从 1 起）。
+    解析失败/照抄原名的项不会出现在返回中。"""
     lines = []
     for i, b in enumerate(batch):
         fname = b["old"]
@@ -907,24 +911,27 @@ def ai_content_batch_call(batch, cfg):
         raw = _ai_content_api_call(prompt, cfg)
     parsed = {}
     for line in raw.split("\n"):
-        m = re.match(r"^\s*(\d+)\s*[.、:：→\-]\s*(.+?)\s*$", line)
+        # 兼容多种编号分隔：1. / 1、 / 1: / 1： / 1- / 1) / 1． / 1 →
+        m = re.match(r"^\s*(?:【?(\d+)】?|(\d+))\s*[.、:：\-)）．→]\s*(.+?)\s*$", line)
         if m:
-            idx = int(m.group(1))
-            name = clean_ai_filename(m.group(2))
+            idx = int(m.group(1) or m.group(2))
+            name = clean_ai_filename(m.group(3))
             # 过滤：照抄原文件名的无效输出
             if 1 <= idx <= len(batch) and name:
                 orig = os.path.splitext(batch[idx - 1]["old"])[0]
                 if name != orig:
                     parsed[idx] = name
-    return [parsed.get(i + 1, "") for i in range(len(batch))]
+    return parsed
 
 
 def run_ai_naming(ids, cfg):
-    """AI 内容命名主入口：返回 {results, err, stopped}，支持中途停止"""
+    """AI 内容命名主入口：返回 {results, err, stopped}，支持中途停止与进度"""
     with STATE.lock:
         file_map = dict(STATE.file_map)
     STATE.ai_naming_stop = False
     STATE.ai_naming = True
+    STATE.ai_naming_total = len(ids)
+    STATE.ai_naming_done = 0
     try:
         limit_map = {"auto": 2000, "500": 500, "1000": 1000, "2000": 2000, "5000": 5000}
         limit = limit_map.get(cfg.get("ai_content_limit", "auto"), 2000)
@@ -942,15 +949,41 @@ def run_ai_naming(ids, cfg):
             batch.append({"fid": fid, "old": info["old"], "content": (content or "")[:limit]})
         if not batch:
             return {}, "没有可处理的文件", False
+        STATE.ai_naming_total = len(batch)
         results = {}
-        if batch_opt == "batch" and len(batch) > 1:
-            if STATE.ai_naming_stop:
-                STATE.log("AI 内容命名已被用户停止", "warning")
-                return results, None, True
-            names = ai_content_batch_call(batch, cfg)
-            for b, new_name in zip(batch, names):
-                if new_name:
-                    results[b["fid"]] = ensure_extension(new_name, b["old"])
+        batch_mode = batch_opt == "batch" and len(batch) > 1
+        if batch_mode:
+            # 自动分批：避免单次请求过大导致 Ollama/云端超时甚至崩溃
+            chunk_size = max(1, int(cfg.get("ai_batch_size", 10) or 10))
+            for start in range(0, len(batch), chunk_size):
+                chunk = batch[start:start + chunk_size]
+                if STATE.ai_naming_stop:
+                    STATE.log("AI 内容命名已被用户停止", "warning")
+                    break
+                names = {}
+                try:
+                    names = ai_content_batch_call(chunk, cfg)
+                except Exception as e:
+                    # 本批整体失败（如超时）：降级为逐文件处理，不让整批丢失
+                    STATE.log(f"批量命名第 {start // chunk_size + 1} 批失败，已降级逐文件处理：{str(e)[:120]}", "warning")
+                    for j, b in enumerate(chunk):
+                        if STATE.ai_naming_stop:
+                            break
+                        try:
+                            raw = ai_content_generate_name(b["old"], b["content"], cfg)
+                            n = clean_ai_filename(raw)
+                            if n:
+                                names[j + 1] = n
+                        except Exception as e2:
+                            pass
+                for j, b in enumerate(chunk):
+                    name = names.get(j + 1)
+                    if name:
+                        results[b["fid"]] = ensure_extension(name, b["old"])
+                    else:
+                        # 解析失败不再静默：标记错误供前端展示
+                        results[b["fid"]] = f"__ERR__:模型未返回有效文件名（第 {start + j + 1} 个）"
+                STATE.ai_naming_done = min(start + len(chunk), len(batch))
         else:
             for b in batch:
                 if STATE.ai_naming_stop:
@@ -961,8 +994,11 @@ def run_ai_naming(ids, cfg):
                     new_name = clean_ai_filename(raw)
                     if new_name:
                         results[b["fid"]] = ensure_extension(new_name, b["old"])
+                    else:
+                        results[b["fid"]] = f"__ERR__:模型未返回有效文件名"
                 except Exception as e:
                     results[b["fid"]] = f"__ERR__:{e}"
+                STATE.ai_naming_done += 1
         return results, None, STATE.ai_naming_stop
     finally:
         STATE.ai_naming = False
@@ -1703,6 +1739,9 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.ai_naming_stop = True
                 STATE.log("已请求停止 AI 内容命名", "warning")
                 json_resp(self, {"ok": True, "ai_naming": STATE.ai_naming})
+            elif path == "/api/ai/naming/status":
+                json_resp(self, {"running": STATE.ai_naming, "stop_requested": STATE.ai_naming_stop,
+                                 "total": STATE.ai_naming_total, "done": STATE.ai_naming_done})
             elif path == "/api/ai/test":
                 self._handle_test_api(data)
             else:

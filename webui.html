@@ -2208,9 +2208,20 @@ async function startAiNaming(){
   if(cfg.ai_content_mode==="本地Ollama"&&!cfg.local_model){ toast("本地模式需要先选择模型（点击「检测本地模型」）"); return; }
   window._aiNamingRunning=true;
   if($("stopAiBtn")) $("stopAiBtn").disabled=false;
-  setBar("AI 正在生成文件名…",8);
+  setBar(`AI 正在生成文件名…（0/${ids.length}）`,8);
+  // 进度轮询：显示 已处理 X/N，避免批量耗时期间界面无反馈
+  const total=ids.length;
+  window._aiProgressTimer=setInterval(async()=>{
+    try{
+      const st=await api("/ai/naming/status","POST",{});
+      const done=Math.min(st.done||0,total);
+      const pct=total?Math.round(8+done/total*86):8;
+      setBar(`AI 正在生成文件名…（${done}/${total}）`,pct);
+    }catch(e){}
+  },1200);
   try{
     const d=await api("/ai/naming","POST",{ids,config:cfg});
+    clearInterval(window._aiProgressTimer);
     const r=d.results||{};
     let ok=0, failed=0, errMsg=null;
     files.forEach(f=>{
@@ -2230,6 +2241,7 @@ async function startAiNaming(){
     const base=failed?(`${failed} 个失败：${errMsg||"原因未知"}`):`已为 ${ok} 个文件生成新文件名`;
     toast(base+(stopped?"（已停止）":""));
   }catch(e){
+    clearInterval(window._aiProgressTimer);
     setBar("AI 命名失败",0);
     toast("AI 命名失败："+e.message);
   }
