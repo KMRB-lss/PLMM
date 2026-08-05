@@ -560,7 +560,9 @@ td .diff{color:var(--warn)}
         </div>
 
         <div class="card">
-          <div class="card-title"><span class="ic">✏️</span>命名规则设置</div>
+          <div class="card-title"><span class="ic">✏️</span>命名规则设置
+            <label class="check" style="margin-left:10px"><input type="checkbox" id="rulesOn" checked onchange="livePreview()"> 启用</label>
+          </div>
           <div class="card-body">
             <div class="row" style="margin-bottom:14px;flex-wrap:wrap;gap:8px">
               <span class="field-label" style="margin:0">方案：</span>
@@ -573,6 +575,10 @@ td .diff{color:var(--warn)}
               <span style="flex:1"></span>
               <label class="check"><input type="checkbox" id="useCategory" onchange="livePreview()"> 按分类命名</label>
               <label class="check"><input type="checkbox" id="groupByExt" onchange="livePreview()"> 按扩展名编号</label>
+            </div>
+            <div class="row" style="margin-bottom:12px">
+              <label class="check"><input type="checkbox" id="numOn" checked onchange="livePreview()"> 编号功能</label>
+              <span style="color:var(--text-3);font-size:12px">关闭后仅应用前缀/后缀，不添加编号</span>
             </div>
             <div class="rules-grid">
               <div class="rule-item">
@@ -622,7 +628,10 @@ td .diff{color:var(--warn)}
 
         <div class="section-gap"></div>
         <div class="card">
-          <div class="card-title"><span class="ic">🔧</span>添加 &amp; 替换 <span style="font-weight:400;color:var(--text-3);font-size:12px">— 与命名规则相互独立，可组合使用</span></div>
+          <div class="card-title"><span class="ic">🔧</span>添加 &amp; 替换
+            <label class="check" style="margin-left:10px"><input type="checkbox" id="addReplaceOn" checked onchange="livePreview()"> 启用</label>
+            <span style="font-weight:400;color:var(--text-3);font-size:12px;margin-left:10px">— 与命名规则相互独立，可组合使用</span>
+          </div>
           <div class="card-body">
             <div class="dual">
               <div>
@@ -1304,6 +1313,10 @@ function getScheme(){
   const s={
     prefix:prefix, start_num:parseInt($("inStart").value||"1",10),
     pad_width:parseInt($("inPad").value||"2",10), suffix:suffix, mode:m,
+    // 功能开关：命名规则 / 编号 / 添加&替换（默认全部开启，预览与重命名只对勾选功能生效）
+    rules_on:$("rulesOn")?$("rulesOn").checked:true,
+    numbering_on:$("numOn")?$("numOn").checked:true,
+    add_replace_on:$("addReplaceOn")?$("addReplaceOn").checked:true,
     // 命名规则是否显式配置：前缀/后缀/非默认模式任一非空即视为启用；
     // 未配置时「添加&替换/正则替换」以原文件名为基础独立生效（与命名规则组合）
     rules_enabled:!!(prefix.trim()||suffix.trim()||m!=="prefix_num"),
@@ -1403,10 +1416,14 @@ document.getElementById("tabs").addEventListener("click", e=>{
 /* ================= 命名预览 ================= */
 function buildName(idx){
   const prefix=$("inPrefix").value;
-  const start=parseInt($("inStart").value||"1",10);
-  const pad=parseInt($("inPad").value||"2",10);
   const suffix=$("inSuffix").value;
   const mode=$("inMode").value;
+  // 编号功能关闭：仅应用前缀/后缀
+  if($("numOn")&&!$("numOn").checked){
+    return (mode==="pns"&&suffix)?`${prefix}_${suffix}`:(prefix||"文件");
+  }
+  const start=parseInt($("inStart").value||"1",10);
+  const pad=parseInt($("inPad").value||"2",10);
   const num=String(start+idx).padStart(pad,"0");
   let base;
   if(mode==="np") base=`${num}_${prefix}`;
@@ -1419,7 +1436,10 @@ function livePreview(){
   clearTimeout(liveTimer);
   liveTimer=setTimeout(()=>{
     const el=$("rulePreview");
-    if(!$("inPrefix").value){
+    if($("rulesOn")&&!$("rulesOn").checked){
+      // 命名规则开关关闭：仅「添加&替换/正则」生效
+      el.innerHTML='<span style="color:var(--text-3)">命名规则已关闭（将保留原文件名，仅应用「添加&替换/正则」）…</span>';
+    }else if(!$("inPrefix").value){
       // 命名规则未配置：提示可由「添加&替换/正则」独立生效
       el.innerHTML='<span style="color:var(--text-3)">命名规则未设置（将保留原文件名，仅应用「添加&替换/正则」）…</span>';
     }else{
@@ -2322,6 +2342,10 @@ function applySchemeToUI(d){
   $("inPad").value=d.pad_width!=null?d.pad_width:2;
   $("inSuffix").value=d.suffix||"";
   $("inMode").value={prefix_num:"pn",num_prefix:"np",prefix_num_suffix:"pns"}[d.mode]||"pn";
+  // 恢复功能开关（方案未保存过开关时默认开启）
+  if($("rulesOn")) $("rulesOn").checked=d.rules_on!==false;
+  if($("numOn")) $("numOn").checked=d.numbering_on!==false;
+  if($("addReplaceOn")) $("addReplaceOn").checked=d.add_replace_on!==false;
   $("regexFind").value=d.regex_find||"";
   $("regexReplace").value=d.regex_replace||"";
   $("addText").value=d.add_text||"";

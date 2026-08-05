@@ -336,18 +336,23 @@ def apply_regex(text, scheme):
     return text
 
 
-def build_new_name(scheme, index, meta=None):
+def build_new_name(scheme, index, meta=None, force_numbering=False):
     mode = scheme.get("mode", "prefix_num")
+    numbering_on = force_numbering or bool(scheme.get("numbering_on", True))
     num = int(scheme.get("start_num", 1)) + index
     padded = str(num).zfill(int(scheme.get("pad_width", 2)))
     prefix = replace_meta_placeholders(str(scheme.get("prefix", "文件") or "文件"), meta, index=index)
-    suffix = replace_meta_placeholders(str(scheme.get("suffix", "") or ""), meta, index=index)
+    suffix_raw = replace_meta_placeholders(str(scheme.get("suffix", "") or ""), meta, index=index)
     prefix = prefix.replace("{编号}", padded)
-    suffix = suffix.replace("{编号}", padded)
+    suffix_raw = suffix_raw.replace("{编号}", padded)
     prefix = sanitize_filename(prefix)
-    suffix = sanitize_filename(suffix)
+    # 空后缀保持为空（sanitize_filename("") 会返回"文件"，需先判断）
+    suffix = sanitize_filename(suffix_raw) if suffix_raw.strip() else ""
     if not prefix:
         prefix = "文件"
+    if not numbering_on:
+        # 编号功能关闭：仅应用前缀/后缀，不添加编号
+        return f"{prefix}_{suffix}" if suffix else prefix
     if mode == "num_prefix":
         return f"{padded}_{prefix}"
     if mode == "prefix_num_suffix":
@@ -568,8 +573,10 @@ def compute_preview(ids, scheme):
             folder, old = info["folder"], info["old"]
             name, ext = os.path.splitext(old)
 
-            # 命名规则是否显式配置（前端 getScheme 传入 rules_enabled）
-            rules_on = bool(scheme.get("rules_enabled"))
+            # 命名规则是否启用（前端 getScheme 传入 rules_on，兼容旧方案 rules_enabled）
+            rules_on = bool(scheme.get("rules_on", scheme.get("rules_enabled")))
+            numbering_on = bool(scheme.get("numbering_on", True))
+            add_replace_on = bool(scheme.get("add_replace_on", True))
             old_name = name
 
             # 分类+编号模式：基于文件的 category 字段
@@ -582,12 +589,12 @@ def compute_preview(ids, scheme):
                 padded = str(num).zfill(int(scheme.get("pad_width", 2)))
                 new_base = f"{cat}_{padded}"
                 scheme_indices[key] += 1
-            # 按扩展名分组编号：同一扩展名使用连续编号
+            # 按扩展名分组编号：同一扩展名使用连续编号（「按扩展名编号」为独立选项，不受编号开关影响）
             elif scheme.get("group_by_ext"):
                 key = ext.lower() or "(无扩展名)"
                 scheme_indices.setdefault(key, 0)
                 meta = read_file_metadata(os.path.join(folder, old))
-                new_base = build_new_name(scheme, scheme_indices[key], meta=meta)
+                new_base = build_new_name(scheme, scheme_indices[key], meta=meta, force_numbering=True)
                 scheme_indices[key] += 1
             # 命名规则已配置：前缀/编号生成新名
             elif rules_on:
@@ -599,13 +606,13 @@ def compute_preview(ids, scheme):
             else:
                 new_base = old_name
 
-            # 添加内容（前/后）：作用于基础名
+            # 添加内容（前/后）：作用于基础名（受「添加&替换」开关控制）
             add_text = (scheme.get("add_text") or "").strip()
-            if add_text:
+            if add_replace_on and add_text:
                 new_base = f"{add_text}_{new_base}" if scheme.get("add_position") == "前" else f"{new_base}_{add_text}"
-            # 查找替换：作用于基础名
+            # 查找替换：作用于基础名（受「添加&替换」开关控制）
             find_text = (scheme.get("find_text") or "").strip()
-            if find_text and find_text in new_base:
+            if add_replace_on and find_text and find_text in new_base:
                 new_base = new_base.replace(find_text, scheme.get("replace_text", ""))
 
             new_base = apply_regex(new_base, scheme)
