@@ -49,7 +49,7 @@ import traceback
 import urllib.request
 import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, unquote, quote
 
 # ============================================================
 # 基础配置
@@ -67,11 +67,10 @@ BASE_DIR = RES_DIR
 DATA_DIR = os.path.join(APP_DIR, "data")
 UNDO_DIR = os.path.join(DATA_DIR, "_undo_logs")
 TEMPLATE_DIR = os.path.join(DATA_DIR, "templates")
-SCHEME_DIR = os.path.join(DATA_DIR, "schemes")
 AI_CONFIG_FILE = os.path.join(DATA_DIR, "ai_config.json")
 LOG_DIR = os.path.join(DATA_DIR, "logs")
 WEB_LOG_FILE = os.path.join(LOG_DIR, "web.log")
-for _d in (UNDO_DIR, TEMPLATE_DIR, SCHEME_DIR, LOG_DIR):
+for _d in (UNDO_DIR, TEMPLATE_DIR, LOG_DIR):
     os.makedirs(_d, exist_ok=True)
 
 AI_READ_TIMEOUT = 90
@@ -563,7 +562,9 @@ def is_system_file(filepath):
     name = os.path.basename(filepath).lower()
     if name in SYSTEM_FILENAMES:
         return True
-    if os.path.splitext(name)[1] in (".tmp", ".temp", ".ini"):
+    # 只过滤明确的系统文件：Office 临时文件（~$xxx.docx）、$ 开头的系统目录项。
+    # 之前把 .ini/.tmp/.temp 一律当系统文件，用户自己的 settings.ini 会凭空消失。
+    if name.startswith(("~$", "$")) or name in ("pagefile.sys", "hiberfil.sys", "swapfile.sys"):
         return True
     try:
         import ctypes
@@ -766,17 +767,37 @@ def scan_files(folders, recursive, only_folders, filter_system):
             if filter_system and is_system_file(path):
                 continue
             if os.path.isdir(path):
-                if only_folders:
+                if only_folders and _mark(path):
                     entries.append(_make_entry(path, name, depth, True))
                 if recursive:
                     walk(path, depth + 1)
             elif os.path.isfile(path):
-                if not only_folders:
+                if not only_folders and _mark(path):
                     entries.append(_make_entry(path, name, depth, False))
 
+    # 去掉「父目录 + 其中子目录」这种重叠：否则同一批文件会出现两次，
+    # 重命名统计虚高，甚至同一个文件被连改两次（F_01 → F_05）
+    norm = []
     for folder in folders:
-        if os.path.isdir(folder):
-            walk(folder, 0)
+        if not os.path.isdir(folder):
+            continue
+        nf = os.path.normcase(os.path.normpath(folder))
+        if nf not in [x[0] for x in norm]:
+            norm.append((nf, folder))
+    if recursive:
+        norm = [(k, o) for k, o in norm
+                if not any(k != other and k.startswith(other + os.sep) for other, _ in norm)]
+    seen = set()
+
+    def _mark(path):
+        key = os.path.normcase(os.path.normpath(path))
+        if key in seen:
+            return False
+        seen.add(key)
+        return True
+
+    for _key, folder in norm:
+        walk(folder, 0)
     with STATE.lock:
         STATE.files = entries
     return entries
@@ -915,6 +936,21 @@ def save_undo_log(operations):
 
 def has_undo():
     return os.path.exists(os.path.join(UNDO_DIR, "_undo_latest.json"))
+
+
+def undo_info():
+    """最近一次撤销记录的摘要（供前端提示「撤销上一批 N 个文件」）"""
+    latest = os.path.join(UNDO_DIR, "_undo_latest.json")
+    if not os.path.exists(latest):
+        return {"has_undo": False}
+    try:
+        with open(latest, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {"has_undo": True,
+                "count": int(data.get("operation_count") or len(data.get("operations") or [])),
+                "timestamp": data.get("timestamp", "")}
+    except Exception:
+        return {"has_undo": False}
 
 
 def perform_undo():
@@ -1185,12 +1221,11 @@ def clean_ai_filename(raw):
 
 
 def ensure_extension(new_name, old_name):
-    ext = os.path.splitext(old_name)[1]
-    if ext:
-        if not new_name.lower().endswith(ext.lower()):
-            return new_name + ext
-        return new_name
-    return new_name
+    """统一「模型返回值 → 最终文件名」的扩展名处理，和 Excel 直通路径保持一致：
+    名字自带合法扩展名（.md/.PDF/.tar.gz）就以它为准，否则补上原扩展名。"""
+    old_ext = os.path.splitext(old_name)[1]
+    base, ext = split_target_name(new_name, old_ext, False)
+    return f"{base}{ext}"
 
 
 # ============================================================
@@ -1675,7 +1710,8 @@ def list_templates():
 
 
 def save_template(name, data):
-    if not re.match(r"^[\w\u4e00-\u9fff\- ]+$", name):
+    name = str(name or "").strip()
+    if not name or not re.match(r"^[\w\u4e00-\u9fff\- ]+$", name):
         return False, "模板名称只能包含中文、字母、数字、下划线和横线"
     try:
         with open(os.path.join(TEMPLATE_DIR, f"{name}.json"), "w", encoding="utf-8") as f:
@@ -1705,39 +1741,6 @@ def _safe_json_path(base_dir, name):
 
 def delete_template(name):
     p = _safe_json_path(TEMPLATE_DIR, name)
-    if p and os.path.exists(p):
-        os.remove(p)
-        return True
-    return False
-
-
-def list_schemes():
-    out = []
-    for fn in sorted(os.listdir(SCHEME_DIR)):
-        if fn.endswith(".json"):
-            name = fn[:-5]
-            try:
-                with open(os.path.join(SCHEME_DIR, fn), "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                out.append({"name": name, "data": data})
-            except Exception:
-                out.append({"name": name, "data": {}})
-    return out
-
-
-def save_scheme(name, data):
-    if not re.match(r"^[\w\u4e00-\u9fff\- ]+$", name):
-        return False, "方案名称只能包含中文、字母、数字、下划线和横线"
-    try:
-        with open(os.path.join(SCHEME_DIR, f"{name}.json"), "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        return True, "已保存"
-    except Exception as e:
-        return False, str(e)
-
-
-def delete_scheme(name):
-    p = _safe_json_path(SCHEME_DIR, name)
     if p and os.path.exists(p):
         os.remove(p)
         return True
@@ -1855,10 +1858,13 @@ def import_excel_bytes(data):
         new = str(row[1] or "").strip() if len(row) > 1 and row[1] is not None else ""
         if not old:
             continue
-        # 表头检测
-        if old in ("原文件名", "文件名", "old", "old_name", "源文件名") and len(rows) > 1:
-            continue
-        if new in ("新文件名", "new", "new_name", "目标文件名"):
+        # 表头检测（大小写不敏感，覆盖常见变体）
+        old_l, new_l = old.strip().lower(), new.strip().lower()
+        old_heads = ("原文件名", "原文件名称", "文件名", "文件名称", "源文件名", "源文件名称",
+                     "old", "old_name", "oldname", "filename", "file_name")
+        new_heads = ("新文件名", "新文件名称", "目标文件名", "目标文件名称",
+                     "new", "new_name", "newname", "target", "target_name")
+        if old_l in old_heads and new_l in new_heads:
             continue
         key = (old, new)
         if key in seen:
@@ -2006,22 +2012,29 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/folders":
                 json_resp(self, {"folders": list(STATE.folders)})
             elif path == "/api/files":
-                json_resp(self, {"files": list(STATE.files)})
+                with STATE.lock:
+                    snapshot = list(STATE.files)
+                # 磁盘上已被删除/移走的条目不返回，避免前端拿着幽灵条目操作
+                alive = []
+                for f in snapshot:
+                    p = os.path.join(f.get("folder") or "", f.get("old") or "")
+                    try:
+                        if os.path.exists(p):
+                            alive.append(f)
+                    except Exception:
+                        pass
+                json_resp(self, {"files": alive})
             elif path == "/api/templates":
                 json_resp(self, {"templates": list_templates()})
-            elif path == "/api/schemes":
-                json_resp(self, {"schemes": list_schemes()})
             elif path == "/api/logs":
                 json_resp(self, {"logs": STATE.get_logs()})
             elif path == "/api/logs/clear":
                 # 写操作只允许 POST（GET 可被 <img>/链接等跨站触发）
                 json_resp(self, {"error": "请使用 POST"}, 405)
             elif path == "/api/undo":
-                json_resp(self, {"has_undo": has_undo()})
+                json_resp(self, undo_info())
             elif path == "/api/providers":
                 json_resp(self, {"providers": PROVIDERS})
-            elif path == "/api/categories":
-                json_resp(self, {"categories": CATEGORIES})
             elif path == "/api/ai/config":
                 json_resp(self, {"config": load_ai_config()})
             else:
@@ -2164,18 +2177,12 @@ class Handler(BaseHTTPRequestHandler):
                 json_resp(self, {"ok": ok, "message": msg, "templates": list_templates()},
                           200 if ok else 400)
             elif path == "/api/templates/delete":
-                delete_template(data.get("name", ""))
-                STATE.log(f"删除模板「{data.get('name','')}」", "warning")
+                name = str(data.get("name", "") or "").strip()
+                if not delete_template(name):
+                    json_resp(self, {"ok": False, "error": "模板不存在（可能已被删除）"}, 404)
+                    return
+                STATE.log(f"删除模板「{name}」", "warning")
                 json_resp(self, {"ok": True, "templates": list_templates()})
-            elif path == "/api/schemes/save":
-                ok, msg = save_scheme(data.get("name", ""), data.get("data", {}))
-                STATE.log(f"保存方案「{data.get('name','')}」：{msg}", "success" if ok else "error")
-                json_resp(self, {"ok": ok, "message": msg, "schemes": list_schemes()},
-                          200 if ok else 400)
-            elif path == "/api/schemes/delete":
-                delete_scheme(data.get("name", ""))
-                STATE.log(f"删除方案「{data.get('name','')}」", "warning")
-                json_resp(self, {"ok": True, "schemes": list_schemes()})
             elif path == "/api/export/excel":
                 self._handle_export_excel(data)
             elif path == "/api/recognize":
@@ -2243,19 +2250,26 @@ class Handler(BaseHTTPRequestHandler):
         if not folders:
             json_resp(self, {"error": "请先添加文件夹"}, 400)
             return
-        cleaned = []
+        cleaned, ignored = [], []
         for f in folders:
             nf = normalize_folder(f)
-            if nf and os.path.isdir(nf) and not any(_same_folder(x, nf) for x in cleaned):
+            if not nf:
+                continue
+            if not os.path.isdir(nf):
+                ignored.append(nf)
+                continue
+            if not any(_same_folder(x, nf) for x in cleaned):
                 cleaned.append(nf)
         if not cleaned:
-            json_resp(self, {"error": "文件夹不存在或不可访问"}, 400)
+            json_resp(self, {"error": "文件夹不存在或不可访问"
+                                      + (f"（{len(ignored)} 个路径不存在）" if ignored else "")}, 400)
             return
         STATE.folders = cleaned
         files = scan_files(STATE.folders, data.get("recursive", True),
                            data.get("only_folders", False), data.get("filter_system", True))
-        STATE.log(f"已加载 {len(files)} 个文件/文件夹")
-        json_resp(self, {"files": files})
+        STATE.log(f"已加载 {len(files)} 个文件/文件夹"
+                  + (f"，{len(ignored)} 个文件夹不存在已忽略" if ignored else ""))
+        json_resp(self, {"files": files, "ignored_folders": ignored})
 
     def _handle_preview(self, data):
         ids = data.get("ids", [])
@@ -2264,8 +2278,7 @@ class Handler(BaseHTTPRequestHandler):
             json_resp(self, {"error": "没有要预览的文件"}, 400)
             return
         results = compute_preview(ids, scheme)
-        prefix = (scheme or {}).get("prefix", "") or ""
-        STATE.log(f"生成预览：{len(ids)} 个文件，前缀「{prefix}」，模式 { (scheme or {}).get('mode','') }", "info")
+        # 预览会被输入框/勾选频繁触发，不写操作日志，避免把真正的失败记录冲掉
         json_resp(self, {"results": results})
 
     def _handle_rename(self, data):
@@ -2274,6 +2287,8 @@ class Handler(BaseHTTPRequestHandler):
         if not ids:
             json_resp(self, {"error": "没有要重命名的文件"}, 400)
             return
+        # 先复位停止标志，再进入忙碌判断：否则「停止请求先到」会被这里清掉
+        STATE.rename_stop = False
         with STATE.lock:
             busy = STATE.renaming
             if not busy:
@@ -2319,8 +2334,10 @@ class Handler(BaseHTTPRequestHandler):
             for r in results.values():
                 cat = r.get("category", "其他")
                 stats[cat] = stats.get(cat, 0) + 1
-            STATE.log(f"识别完成：{len(results)} 个文件（模式: {mode}）")
-            json_resp(self, {"results": results, "stats": stats, "mode": mode, "note": note})
+            STATE.log(f"识别完成：{len(results)} 个文件（模式: {mode}）"
+                      + ("（已停止）" if STATE.recognize_stop else ""))
+            json_resp(self, {"results": results, "stats": stats, "mode": mode, "note": note,
+                             "stopped": bool(STATE.recognize_stop)})
         except Exception as e:
             traceback.print_exc()
             json_resp(self, {"error": str(e)}, 500)
@@ -2416,7 +2433,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_response(200)
         self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        # HTTP 头只能是 latin-1：中文文件名直接塞进 filename="" 会让 send_header 抛异常，
+        # 结果是「200 + 一段错误 JSON」，导出按钮永远下载不到文件。
+        # 用 RFC5987 的 filename* 传 UTF-8 文件名，另给一个 ASCII 兜底名。
+        self.send_header("Content-Disposition",
+                         "attachment; filename=\"rename_list.xlsx\"; filename*=UTF-8''" + quote(filename))
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
