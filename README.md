@@ -43,7 +43,7 @@
 
 ### 方式零（推荐）：免安装 exe
 
-从 [Releases 页面](https://github.com/KMRB-lss/PLMM/releases) 下载 `BatchFileRenamer_v1.0.0.exe`（约 55MB，已内置全部文档解析库，不含本地 CLIP），双击即可运行，**启动后自动打开浏览器界面**。
+从 [Releases 页面](https://github.com/KMRB-lss/PLMM/releases) 下载最新版 `BatchFileRenamer_v1.1.0.exe`（约 106MB，已内置全部文档解析库，不含本地 CLIP），双击即可运行，**启动后自动打开浏览器界面**。
 需要本地 CLIP 图片识别时，另下载 `model_pack.zip` 解压到 exe 同级目录 `resources/model_pack/` 即可。
 
 > 运行数据（撤销记录、规则模板、AI 配置等）会自动创建在 **exe 同目录** 的 `data/` 文件夹中，请保持 exe 所在文件夹可写。
