@@ -208,6 +208,8 @@ def sanitize_filename(name):
     cleaned = name
     for ch in illegal_chars:
         cleaned = cleaned.replace(ch, "_")
+    # 控制字符（\n \t \x00 等）Windows 文件名不允许，之前靠正则替换插入的换行会让改名报「失败: 语法」
+    cleaned = re.sub(r"[\x00-\x1f\x7f]", "_", cleaned)
     cleaned = cleaned.strip().rstrip(". ")
     cleaned = re.sub("_+", "_", cleaned).strip("_")
     reserved = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)),
@@ -217,6 +219,125 @@ def sanitize_filename(name):
     if len(cleaned) > 255:
         cleaned = cleaned[:255]
     return cleaned or "文件"
+
+
+MAX_FULL_PATH = 259   # Windows 未开启长路径支持时完整路径上限（含盘符）
+
+
+def fit_filename(folder, base, ext):
+    """把「base+ext」裁剪到 Windows 能落盘的长度，返回裁剪后的 base。
+    之前只把 base 截到 255 字符，没算扩展名与目录长度，前缀很长时真实改名会
+    报「失败: 语法」（WinError 123 文件名/路径过长）。"""
+    ext = ext or ""
+    base = base or ""
+    # 单个文件名（含扩展名）上限 255 字符
+    max_base = max(1, 255 - len(ext))
+    if len(base) > max_base:
+        base = base[:max_base]
+    # 完整路径上限：目录已经很深时继续裁剪文件名，避免整次改名失败
+    try:
+        full_len = len(os.path.join(folder or "", base + ext))
+        if full_len > MAX_FULL_PATH:
+            base = base[:max(1, len(base) - (full_len - MAX_FULL_PATH))]
+    except Exception:
+        pass
+    return base or "文件"
+
+
+def normalize_ext(raw):
+    """把用户/表格给的扩展名规范化成「.md」「.tar.gz」这种形式；无效返回 ""。
+
+    - 允许 "md" / ".md" / "*.md" / " .MD "；
+    - 允许多段（.tar.gz），但最长 3 段、每段 ≤10 个字母数字；
+    - 纯数字（如 "v1.2" 里的 ".2"）不算扩展名，避免把版本号当扩展名。
+    """
+    if raw is None:
+        return ""
+    e = str(raw).strip().strip('"').strip("'").strip()
+    if not e:
+        return ""
+    e = e.lstrip("*").strip()
+    e = re.sub(r"^[.\s]+", "", e)
+    e = re.sub(r"[^A-Za-z0-9.]", "", e)
+    parts = [p for p in e.split(".") if p]
+    if not parts or len(parts) > 3:
+        return ""
+    if all(p.isdigit() for p in parts):
+        return ""
+    if any(len(p) > 10 for p in parts):
+        return ""
+    return "." + ".".join(parts)
+
+
+def split_target_name(name, old_ext, is_folder):
+    """把「用户给定的完整新名」拆成 (基础名, 扩展名)。
+
+    规则：
+      - 文件夹没有扩展名，整名都是基础名；
+      - 名字末尾是合法扩展名（.md / .PDF / .tar.gz）时以它为准 —— Excel 导入映射改扩展名靠这条；
+      - 否则整名当基础名，沿用原扩展名 —— 避免把「v1.2 报告」「2024.年终总结」里的点当扩展名。
+    """
+    name = (name or "").strip()
+    if is_folder:
+        return name, ""
+    raw_ext = os.path.splitext(name)[1]
+    ext = normalize_ext(raw_ext) if raw_ext else ""
+    if ext:
+        base = name[:len(name) - len(raw_ext)]
+        if base:
+            return base, ext
+    return name, (old_ext or "")
+
+
+def update_state_after_move(old_path, new_path):
+    """文件/文件夹在磁盘上改名后，同步内存状态。
+
+    涉及两处：
+      - STATE.file_map：old_path / old / folder（folder 覆盖被改名目录的全部子孙条目）
+      - STATE.files：条目自身的 old，以及以被改名目录为父目录的 folder
+
+    之前 perform_rename 只更新了被改名的那一条，且用「改名后 os.path.isdir(old_path)」
+    判断是否文件夹（此时 old_path 早已不存在，永远为假），因此文件夹改名后
+    子条目的 folder 仍是旧路径，下一步操作一律「失败: 找不到」；
+    perform_undo 则完全不更新内存，撤销后任何操作都会「找不到」。
+    """
+    old_base = os.path.normpath(old_path)
+    new_base = os.path.normpath(new_path)
+    old_norm = os.path.normcase(old_base)
+    prefix = old_norm + os.sep
+
+    def _map(p):
+        if not p:
+            return None
+        norm = os.path.normcase(os.path.normpath(p))
+        if norm == old_norm:
+            return new_base
+        if norm.startswith(prefix):
+            rel = os.path.normpath(p)[len(old_base):]
+            return os.path.normpath(new_base + rel)
+        return None
+
+    with STATE.lock:
+        for entry in STATE.file_map.values():
+            mapped = _map(entry.get("old_path"))
+            if mapped:
+                entry["old_path"] = mapped
+                entry["old"] = os.path.basename(mapped)
+            mapped_folder = _map(entry.get("folder"))
+            if mapped_folder:
+                entry["folder"] = mapped_folder
+        for sf in STATE.files:
+            folder = sf.get("folder") or ""
+            if os.path.normcase(os.path.normpath(os.path.join(folder, sf.get("old") or ""))) == old_norm:
+                sf["old"] = os.path.basename(new_base)
+                sf["relpath"] = sf["old"]
+                sf["ext"] = os.path.splitext(sf["old"])[1].lower()
+                if not sf.get("_is_folder"):
+                    sf["cat"] = guess_category(sf["old"])
+                continue
+            mapped_folder = _map(folder)
+            if mapped_folder:
+                sf["folder"] = mapped_folder
 
 
 def replace_meta_placeholders(text, meta, index=None):
@@ -343,8 +464,9 @@ def apply_regex(text, scheme):
         try:
             flags = 0 if scheme.get("regex_case_sensitive", True) else re.IGNORECASE
             text = re.sub(scheme["regex_find"], _py_replacement(scheme.get("regex_replace", "")), text, flags=flags)
-        except re.error:
-            pass
+        except re.error as e:
+            # 正则写错时不要让用户以为已经生效
+            STATE.log(f"正则替换未生效（语法错误：{e}）：{scheme.get('regex_find')!r}", "warning")
     return text
 
 
@@ -395,6 +517,33 @@ def get_unique_path(folder, new_base, ext, old_name=None):
         counter += 1
 
 
+def dedupe_candidate(folder, cand, old_name, used_set):
+    """批内去重：目标名被本批其他文件占用（或磁盘上已存在别的同名文件）时追加 _N。
+
+    原先只查 used_set，不看磁盘：目录里已有未参与本批的 X_1.txt 时，
+    「预览」给出的 X_1.txt 实际不可用，真实改名会「失败: 已存在」。
+    """
+    base0, ext0 = os.path.splitext(cand)
+    n = 1
+    self_name = (old_name or "").lower()
+
+    def _taken(name):
+        low = name.lower()
+        if low in used_set:
+            return True
+        if low == self_name:
+            return False
+        try:
+            return os.path.exists(os.path.join(folder, name))
+        except Exception:
+            return False
+
+    while _taken(cand):
+        cand = f"{base0}_{n}{ext0}"
+        n += 1
+    return cand
+
+
 def guess_category(path):
     ext = os.path.splitext(path)[1].lower()
     if ext in IMAGE_EXT_MAP:
@@ -432,6 +581,7 @@ def is_system_file(filepath):
 class AppState:
     def __init__(self):
         self.lock = threading.Lock()
+        self._id_seq = 0          # 文件 id 全局单调递增：重新加载新文件夹后旧 id 不会「复活」成新文件
         self.folders = []
         self.file_map = {}      # id -> {folder, old, old_path}
         self.files = []         # 最近加载的快照
@@ -445,6 +595,13 @@ class AppState:
         self.ai_naming_total = 0      # AI 命名总数（用于进度）
         self.ai_naming_done = 0       # AI 命名已完成数
         self.ai_naming_result = None  # AI 命名最终结果 {results, stopped, failed, error_detail}
+        self.ai_naming_error = None   # AI 命名整体失败原因（轮询接口透出给前端）
+
+    def next_id(self):
+        with self.lock:
+            fid = self._id_seq
+            self._id_seq += 1
+            return fid
 
     def log(self, msg, level="info"):
         """记录操作日志：内存(500条) + 持久化到 data/logs/web.log"""
@@ -512,6 +669,11 @@ def _schedule_exit(delay, reason):
 
         def _do_exit():
             STATE.log("程序即将关闭", "info")
+            # 正在重命名时先等它做完（最多 60 秒），避免留下半批改名
+            for _ in range(120):
+                if not STATE.renaming:
+                    break
+                time.sleep(0.5)
             # 强制结束进程（exe 无窗口模式下最可靠），避免 shutdown() 阻塞等待
             try:
                 svr = _current_server
@@ -534,13 +696,39 @@ _current_server = None  # 由 main() 注入，供退出流程调用 shutdown()
 # ============================================================
 # 文件扫描
 # ============================================================
+def normalize_folder(path):
+    """统一文件夹写法（去空白、规范分隔符、去尾部反斜杠），
+    否则「D:\\a」与「D:\\a\\」会被当成两个不同文件夹，重复添加且列表里出现两条。"""
+    if path is None:
+        return ""
+    p = str(path).strip().strip('"')
+    if not p:
+        return ""
+    try:
+        return os.path.normpath(p)
+    except Exception:
+        return p
+
+
+def _same_folder(a, b):
+    try:
+        return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+    except Exception:
+        return a == b
+
+
 def scan_files(folders, recursive, only_folders, filter_system):
     entries = []
-    id_counter = [0]
+    # 每次重新加载都从空白状态开始：若不清空 file_map，上一批文件留下的旧 id
+    # 依然指向旧文件夹里的真实文件，前端拿着过期 id 操作时会「成功改名另一个
+    # 文件夹里的文件」（跨文件夹误改名）。id 由 STATE.next_id() 单调递增，
+    # 因此清空后旧 id 不会再复活成新文件。
+    with STATE.lock:
+        STATE.file_map.clear()
+        STATE.files = []
 
     def _make_entry(path, name, depth, is_folder):
-        fid = id_counter[0]
-        id_counter[0] += 1
+        fid = STATE.next_id()
         try:
             st = os.stat(path)
             size, mtime = st.st_size, datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M")
@@ -549,10 +737,22 @@ def scan_files(folders, recursive, only_folders, filter_system):
         ext = os.path.splitext(name)[1].lower()
         with STATE.lock:
             # orig：首次加载的原始文件名，重命名后 old 会更新为新名，但 {原文件名} 元数据始终引用 orig
-            STATE.file_map[fid] = {"folder": os.path.dirname(path), "old": name, "old_path": path, "orig": name}
+            # is_folder：必须一起存，后续「文件夹改名要同步子条目」「文件夹名里的点不是扩展名」都依赖它
+            STATE.file_map[fid] = {"folder": os.path.dirname(path), "old": name, "old_path": path,
+                                   "orig": name, "is_folder": is_folder}
         return {"id": fid, "old": name, "ext": ext, "relpath": name,
                 "size": size, "mtime": mtime, "cat": guess_category(name) if not is_folder else "文件夹",
                 "folder": os.path.dirname(path), "_is_folder": is_folder}
+
+    def _is_link_like(path):
+        """junction / 符号链接：递归进入会跑出所选目录（甚至改到目录外的文件），一律不跟进"""
+        try:
+            if os.path.islink(path):
+                return True
+            st = os.lstat(path)
+            return bool(getattr(st, "st_file_attributes", 0) & 0x400)  # FILE_ATTRIBUTE_REPARSE_POINT
+        except Exception:
+            return False
 
     def walk(folder, depth=0):
         try:
@@ -561,6 +761,8 @@ def scan_files(folders, recursive, only_folders, filter_system):
             return
         for name in names:
             path = os.path.join(folder, name)
+            if _is_link_like(path):
+                continue
             if filter_system and is_system_file(path):
                 continue
             if os.path.isdir(path):
@@ -597,11 +799,24 @@ def compute_preview(ids, scheme):
             continue
         try:
             folder, old = info["folder"], info["old"]
-            name, ext = os.path.splitext(old)
+            is_folder = bool(info.get("is_folder"))
+            if is_folder:
+                # 文件夹本身没有扩展名，整名参与命名；否则「报告.v2」会被拆成
+                # 基础名「报告」+ 扩展名「.v2」，预览/改名结果变成「前缀_1.v2」
+                name, ext = old, ""
+            else:
+                name, ext = os.path.splitext(old)
 
             # 命名规则是否启用（前端 getScheme 传入 rules_on，兼容旧方案 rules_enabled）
             # 需同时满足：功能开关打开 且 已显式配置规则（前缀/后缀/非默认模式）；
             # 未显式配置时保留原文件名，让「添加&替换/正则」独立生效（与前端提示一致）
+            # 统一修改扩展名（留空=保持原扩展名；文件夹不处理）
+            target_ext = ext
+            if not is_folder:
+                new_ext = normalize_ext(scheme.get("new_ext"))
+                if new_ext:
+                    target_ext = new_ext
+
             rules_enabled = bool(scheme.get("rules_enabled", True))
             rules_on = bool(scheme.get("rules_on", True)) and rules_enabled
             numbering_on = bool(scheme.get("numbering_on", True))
@@ -640,10 +855,16 @@ def compute_preview(ids, scheme):
             else:
                 new_base = old_name
 
-            # 添加内容（前/后）：作用于基础名（受「添加&替换」开关控制）
-            add_text = (scheme.get("add_text") or "").strip()
-            if add_replace_on and add_text:
-                new_base = f"{add_text}_{new_base}" if scheme.get("add_position") == "前" else f"{new_base}_{add_text}"
+            # 添加内容（前/后）：直接拼在基础名前后，不自动加 "_" 等分隔符。
+            # 需要分隔符时由用户在「添加内容」里自己写（如「2024_」）。
+            # 只裁掉朝外那一侧的空格（末尾/开头空格 Windows 本来也会去掉），
+            # 贴合一侧的空格保留，这样「旅行 」+「IMG」仍能得到「旅行 IMG」。
+            add_text_raw = str(scheme.get("add_text") or "")
+            if add_replace_on and add_text_raw.strip():
+                if scheme.get("add_position") == "前":
+                    new_base = f"{add_text_raw.lstrip()}{new_base}"
+                else:
+                    new_base = f"{new_base}{add_text_raw.rstrip()}"
             # 查找替换：作用于基础名（受「添加&替换」开关控制）
             # find_mode：包含（替换所有出现）/ 开头是（文件名以目标开头，只替换靠前的第一个）/ 结尾是（文件名以目标结尾，只替换靠后的最后一个）
             find_text = (scheme.get("find_text") or "").strip()
@@ -665,19 +886,18 @@ def compute_preview(ids, scheme):
 
             new_base = apply_regex(new_base, scheme)
             new_base = sanitize_filename(new_base) or "文件"
+            # 裁到可落盘长度（要算上扩展名与目录路径，否则真实改名报「失败: 语法」）
+            new_base = fit_filename(folder, new_base, target_ext)
             # old_name：目标名与原文件名一致时允许同名（自身不算冲突）
-            new_name = get_unique_path(folder, new_base, ext, old_name=old)
+            new_name = get_unique_path(folder, new_base, target_ext, old_name=old)
             # 批内去重：本批其他文件已占用该目标名（且非自身）时自动加 _N，保证预览与执行一致
             used_set = used_targets.setdefault(folder, set())
-            cand = new_name
-            base0, ext0 = os.path.splitext(cand)
-            n = 1
-            while cand.lower() in used_set and cand.lower() != old.lower():
-                cand = f"{base0}_{n}{ext0}"
-                n += 1
+            cand = dedupe_candidate(folder, new_name, old, used_set)
             if cand.lower() != old.lower():
                 used_set.add(cand.lower())
-            results[fid] = {"new": cand, "status": "待重命名"}
+            # 名称没有任何变化时提前告知（真实重命名会跳过，不再虚报「成功」）
+            results[fid] = {"new": cand,
+                            "status": "跳过: 名称未变化" if cand == old else "待重命名"}
         except Exception as e:
             results[fid] = {"new": "", "status": f"错误: {e}"}
     return results
@@ -703,18 +923,33 @@ def perform_undo():
         return {"success": 0, "failed": 0, "skipped": 0}
     with open(latest, "r", encoding="utf-8") as f:
         data = json.load(f)
-    stats = {"success": 0, "failed": 0, "skipped": 0}
+    stats = {"success": 0, "failed": 0, "skipped": 0, "details": []}
     for op in reversed(data.get("operations", [])):
         current = os.path.join(op["folder"], op["new"])
         target = os.path.join(op["folder"], op["old"])
         if not os.path.exists(current):
             stats["skipped"] += 1
+            stats["details"].append({"file": op.get("new"), "status": "跳过: 原文件已不在"})
             continue
         try:
             os.rename(current, target)
             stats["success"] += 1
-        except Exception:
+            # 撤销也要同步内存状态，否则撤销成功后前端再点预览/重命名一律「失败: 找不到」
+            update_state_after_move(current, target)
+        except Exception as e:
             stats["failed"] += 1
+            stats["details"].append({"file": op.get("new"), "status": f"失败: {e}"})
+    # 撤销记录一次性消费：成功后归档，避免「再次点撤销」拿到同一批记录显示全跳过、
+    # 也避免 has_undo 永远为 True
+    if stats["success"] > 0:
+        try:
+            done_path = os.path.join(UNDO_DIR, f"_undo_undone_{time.strftime('%Y%m%d_%H%M%S')}.json")
+            shutil.move(latest, done_path)
+        except Exception:
+            try:
+                os.remove(latest)
+            except Exception:
+                pass
     STATE.log(f"撤销完成！成功:{stats['success']} 失败:{stats['failed']} 跳过:{stats['skipped']}",
               "success" if stats["failed"] == 0 else "warning")
     return stats
@@ -737,9 +972,12 @@ def perform_rename(ids, scheme):
             # AI 直通同样做冲突防护：与自身同名放行，与其他文件撞名自动加 _1（与规则预览一致）
             info = file_map.get(_fid)
             if info:
-                _name = get_unique_path(info["folder"], os.path.splitext(_name)[0],
-                                        os.path.splitext(_name)[1] or os.path.splitext(info["old"])[1],
-                                        old_name=info["old"])
+                # 目标名可能带扩展名（Excel 导入就是靠它改扩展名），也可能只是「v1.2 报告」这种带点的名字：
+                # 只有末尾是合法扩展名时才替换，否则沿用原扩展名
+                old_ext = os.path.splitext(info["old"])[1]
+                _base, _ext = split_target_name(_name, old_ext, bool(info.get("is_folder")))
+                _base = fit_filename(info["folder"], sanitize_filename(_base) or "文件", _ext)
+                _name = get_unique_path(info["folder"], _base, _ext, old_name=info["old"])
             preview[_fid] = {"new": _name}
     else:
         preview = compute_preview(ids, scheme)
@@ -764,19 +1002,20 @@ def perform_rename(ids, scheme):
             results[fid] = {"status": "跳过: 未生成新文件名", "old": info["old"], "new": ""}
             continue
         folder = info["folder"]
-        # 批内去重：目标名已被本批其他文件占用（且非自身）时自动加 _N
+        # 批内去重 + 磁盘判重：目标名已被本批其他文件占用，或磁盘上已存在同名的
+        # 未参与本批文件时自动加 _N（否则预览会说可用、执行时才报「已存在」）
         used_set = used_targets.setdefault(folder, set())
-        cand = new
-        base0, ext0 = os.path.splitext(cand)
-        n = 1
-        while cand.lower() in used_set and cand.lower() != info["old"].lower():
-            cand = f"{base0}_{n}{ext0}"
-            n += 1
-        if cand.lower() != info["old"].lower():
-            used_set.add(cand.lower())
-        new = cand
+        new = dedupe_candidate(folder, new, info["old"], used_set)
+        if new.lower() != info["old"].lower():
+            used_set.add(new.lower())
         old_path = os.path.join(folder, info["old"])
         new_path = os.path.join(folder, new)
+        if new == info["old"]:
+            # 新名与原名完全一致：没有可做的改名，之前会执行「自己改自己」并虚报成功，
+            # 还会写进撤销记录，导致撤销结果与用户预期不符
+            stats["skipped"] += 1
+            results[fid] = {"status": "跳过: 名称未变化", "old": info["old"], "new": new}
+            continue
         if not os.path.exists(old_path):
             stats["failed"] += 1
             results[fid] = {"status": "失败: 找不到", "old": info["old"], "new": new}
@@ -786,38 +1025,15 @@ def perform_rename(ids, scheme):
             stats["success"] += 1
             operations.append({"folder": info["folder"], "old": info["old"], "new": new})
             results[fid] = {"status": "成功", "old": info["old"], "new": new}
-            # 同步更新内存状态：使后续预览/重命名基于真实磁盘文件名，避免「找不到文件」
-            with STATE.lock:
-                entry = STATE.file_map.get(fid)
-                if entry is not None:
-                    entry["old"] = new
-                    entry["old_path"] = new_path
-                for sf in STATE.files:
-                    if sf.get("id") == fid:
-                        sf["old"] = new
-                        sf["relpath"] = new
-                        sf["ext"] = os.path.splitext(new)[1].lower()
-                        if not sf.get("_is_folder"):
-                            sf["cat"] = guess_category(new)
-                        break
-                # 文件夹改名：同步其下所有已加载条目的 folder，否则子文件的元数据（日期等）会因路径失效而读不到
-                if info.get("_is_folder") or os.path.isdir(old_path):
-                    old_p = os.path.normcase(old_path.rstrip("\\/"))
-                    prefix_old = old_p + os.sep
-                    for e in STATE.file_map.values():
-                        ef = e.get("folder")
-                        if not ef:
-                            continue
-                        ef_n = os.path.normcase(ef)
-                        if ef_n == old_p or ef_n.startswith(prefix_old):
-                            e["folder"] = os.path.join(new_path, ef[len(old_path):].lstrip("\\/")).rstrip("\\/")
-                    for sf in STATE.files:
-                        ef = sf.get("folder")
-                        if not ef:
-                            continue
-                        ef_n = os.path.normcase(ef)
-                        if ef_n == old_p or ef_n.startswith(prefix_old):
-                            sf["folder"] = os.path.join(new_path, ef[len(old_path):].lstrip("\\/")).rstrip("\\/")
+            # 同步更新内存状态（含文件夹改名后的全部子孙条目），
+            # 否则后续预览/重命名会基于旧路径「失败: 找不到」
+            update_state_after_move(old_path, new_path)
+            # 立即落盘撤销记录：批量改名途中关闭标签页/点退出会触发进程结束，
+            # 若只在循环结束后写盘，已改好的那部分文件将永远无法撤销
+            try:
+                save_undo_log(operations)
+            except Exception:
+                pass
         except PermissionError:
             stats["failed"] += 1
             results[fid] = {"status": "失败: 权限", "old": info["old"], "new": new}
@@ -869,9 +1085,11 @@ def read_document_content(filepath):
             try:
                 from openpyxl import load_workbook
                 wb = load_workbook(filepath, read_only=True, data_only=True)
-                parts = [" | ".join(str(c) for c in row if c is not None)
-                         for ws in wb.worksheets for row in ws.iter_rows(values_only=True) if any(c is not None for c in row)]
-                wb.close()
+                try:
+                    parts = [" | ".join(str(c) for c in row if c is not None)
+                             for ws in wb.worksheets for row in ws.iter_rows(values_only=True) if any(c is not None for c in row)]
+                finally:
+                    wb.close()
                 return "\n".join(parts).strip()
             except ImportError:
                 return "openpyxl 未安装"
@@ -892,8 +1110,10 @@ def read_document_content(filepath):
             try:
                 import fitz
                 doc = fitz.open(filepath)
-                text = "\n".join(page.get_text() for page in doc)
-                doc.close()
+                try:
+                    text = "\n".join(page.get_text() for page in doc)
+                finally:
+                    doc.close()
                 if text and text.strip():
                     return text.strip()
             except Exception:
@@ -939,13 +1159,28 @@ def clean_ai_filename(raw):
         return ""
     raw = raw.strip().strip('"').strip("'").strip("`").strip("。.")
     lines = [l.strip() for l in raw.split("\n") if l.strip()]
-    skip_prefixes = ("请求", "注意", "要求", "说明", "这里", "生成", "以下", "根据", "好的", "ok", "OK", "---")
-    for l in lines:
-        if l.startswith(skip_prefixes) or re.match(r"^\d+[\.\、:：]\s*", l):
-            l = re.sub(r"^\d+[\.\、:：]\s*", "", l).strip()
-        if l:
-            cleaned = re.sub(r'[\\/:*?"<>|\r\n]', "", l).strip().strip("。")
-            return cleaned[:50]
+    # 只把「明显是解释的话」当噪声，避免把「说明文档」「生成报告」这类正常名字误杀
+    explain_prefixes = ("好的", "以下是", "抱歉", "很抱歉", "当然", "ok", "OK", "---")
+
+    def _clean(text):
+        text = re.sub(r"^\d+[\.\、:：\-）\)]\s*", "", text).strip()
+        text = re.sub(r'[\\/:*?"<>|\r\n\t]', "", text).strip()
+        return text.strip("。.,，、").strip()[:50]
+
+    for line in lines:
+        is_explain = line.startswith(explain_prefixes) or line.endswith(("：", ":"))
+        if is_explain:
+            # 「好的，文件名：旅行照片」→ 取冒号后面的部分
+            parts = re.split(r"[:：]", line)
+            if len(parts) > 1:
+                cand = _clean(parts[-1])
+                if cand and not re.match(r"^\d", cand):
+                    return cand
+            continue
+        cand = _clean(line)
+        if cand:
+            return cand
+    # 全是解释性文字：返回空，让调用方明确报「模型未返回有效文件名」，不要拿整句当文件名
     return ""
 
 
@@ -979,7 +1214,12 @@ def chat_completion(endpoint, model, key, messages, max_tokens=512, temperature=
 
 def ai_content_generate_name(filename, content, cfg):
     prompt = cfg.get("ai_content_prompt", DEFAULT_AI_CONFIG["ai_content_prompt"])
-    prompt = prompt.format(filename=filename, ext=os.path.splitext(filename)[1], content=content[:2000])
+    # 不用 str.format：自定义提示词里若出现别的花括号（如 {文件名}）会抛 KeyError，
+    # 导致 AI 命名整批失败。这里只做字面量替换。
+    prompt = (str(prompt)
+              .replace("{filename}", str(filename))
+              .replace("{ext}", os.path.splitext(filename)[1])
+              .replace("{content}", str(content[:2000])))
     if cfg.get("ai_content_mode") == "本地Ollama":
         return _ai_content_local_call(prompt, cfg)
     return _ai_content_api_call(prompt, cfg)
@@ -1058,6 +1298,7 @@ def run_ai_naming(ids, cfg):
     STATE.ai_naming_total = len(ids)
     STATE.ai_naming_done = 0
     STATE.ai_naming_result = None
+    STATE.ai_naming_error = None
     try:
         limit_map = {"auto": 2000, "500": 500, "1000": 1000, "2000": 2000, "5000": 5000}
         limit = limit_map.get(cfg.get("ai_content_limit", "auto"), 2000)
@@ -1080,7 +1321,12 @@ def run_ai_naming(ids, cfg):
         batch_mode = batch_opt == "batch" and len(batch) > 1
         if batch_mode:
             # 自动分批：避免单次请求过大导致 Ollama/云端超时甚至崩溃
-            chunk_size = max(1, int(cfg.get("ai_batch_size", 10) or 10))
+            # 前端设置项叫 batch_size；旧代码只读 ai_batch_size，导致用户的「批量大小」永远无效
+            try:
+                chunk_size = int(cfg.get("ai_batch_size") or cfg.get("batch_size") or 10)
+            except (TypeError, ValueError):
+                chunk_size = 10
+            chunk_size = max(1, chunk_size)
             for start in range(0, len(batch), chunk_size):
                 chunk = batch[start:start + chunk_size]
                 if STATE.ai_naming_stop:
@@ -1283,7 +1529,8 @@ def model_pack_recognize(ids):
         raise Exception("未找到模型包（resources/model_pack），无法使用本地 CLIP 识别")
     with STATE.lock:
         file_map = dict(STATE.file_map)
-    image_paths = [os.path.join(file_map[fid]["folder"], file_map[fid]["old"]) for fid in ids if fid in file_map]
+    valid_ids = [fid for fid in ids if fid in file_map]
+    image_paths = [os.path.join(file_map[fid]["folder"], file_map[fid]["old"]) for fid in valid_ids]
     if not image_paths:
         raise Exception("没有可识别的图片")
     try:
@@ -1309,7 +1556,7 @@ def model_pack_recognize(ids):
     if STATE.recognize_stop:
         STATE.log("本地 CLIP 识别已被用户停止", "warning")
         return results
-    for fid, r in zip(ids, raw_results):
+    for fid, r in zip(valid_ids, raw_results):
         results[fid] = {"category": r.get("category", "其他"),
                         "similarity": r.get("similarity", 0.0),
                         "tags": []}
@@ -1329,7 +1576,8 @@ def local_clip_recognize(ids):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     try:
         model_name = "ViT-B-32"
-        model, _, preprocess = open_clip.create_model_and_transforms(model_name)
+        # 不传 pretrained 会得到随机权重，分类结果毫无意义
+        model, _, preprocess = open_clip.create_model_and_transforms(model_name, pretrained="openai")
         model = model.to(device)
         model.eval()
         tokenizer = open_clip.get_tokenizer(model_name)
@@ -1437,9 +1685,27 @@ def save_template(name, data):
         return False, str(e)
 
 
+def _safe_json_path(base_dir, name):
+    """把用户给的名字限制成 base_dir 下的单个 .json 文件，拒绝路径穿越/绝对路径。
+
+    之前 delete_template("..\\..\\x") 能删到目录外任意 .json（save_* 有白名单，delete_* 没有）。
+    """
+    if not isinstance(name, str) or not name:
+        return None
+    if not re.match(r"^[\w\u4e00-\u9fff\- ]+$", name):
+        return None
+    p = os.path.join(base_dir, f"{name}.json")
+    try:
+        if os.path.dirname(os.path.abspath(p)) != os.path.abspath(base_dir):
+            return None
+    except Exception:
+        return None
+    return p
+
+
 def delete_template(name):
-    p = os.path.join(TEMPLATE_DIR, f"{name}.json")
-    if os.path.exists(p):
+    p = _safe_json_path(TEMPLATE_DIR, name)
+    if p and os.path.exists(p):
         os.remove(p)
         return True
     return False
@@ -1471,8 +1737,8 @@ def save_scheme(name, data):
 
 
 def delete_scheme(name):
-    p = os.path.join(SCHEME_DIR, f"{name}.json")
-    if os.path.exists(p):
+    p = _safe_json_path(SCHEME_DIR, name)
+    if p and os.path.exists(p):
         os.remove(p)
         return True
     return False
@@ -1636,14 +1902,21 @@ def json_resp(handler, data, status=200):
 
 
 def read_json(handler):
-    length = int(handler.headers.get("Content-Length", 0))
+    try:
+        length = int(handler.headers.get("Content-Length", 0) or 0)
+    except (TypeError, ValueError):
+        length = 0
     if length <= 0:
         return {}
-    raw = handler.rfile.read(length)
     try:
-        return json.loads(raw.decode("utf-8"))
+        raw = handler.rfile.read(length)
     except Exception:
         return {}
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1651,6 +1924,48 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         pass
+
+    # ---------- 请求来源校验 ----------
+    def _allowed_hosts(self):
+        port = self.server.server_address[1]
+        return {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+
+    def _check_request_origin(self):
+        """拦掉跨站请求。
+
+        服务只监听 127.0.0.1，但浏览器里任意网页都能向它发「简单请求」：
+        不加校验时，用户开着本工具去访问别的网页，对方就能批量改名/撤销/退出，
+        甚至通过 /api/open/file 启动任意程序。
+        - 有 Origin/Referer 时必须是本机同源；
+        - POST 必须是 application/json（会触发预检，普通表单/文本请求发不出来）。
+        """
+        origin = self.headers.get("Origin") or ""
+        if origin and origin != "null":
+            host = urlparse(origin).netloc
+            if host not in self._allowed_hosts():
+                return False
+        ref = self.headers.get("Referer") or ""
+        if ref:
+            try:
+                if urlparse(ref).netloc not in self._allowed_hosts():
+                    return False
+            except Exception:
+                return False
+        return True
+
+    def _known_path(self, p):
+        """路径是否属于当前已加载的文件/文件夹（限制 open/reveal 的作用范围）"""
+        try:
+            target = os.path.normcase(os.path.normpath(str(p)))
+        except Exception:
+            return False
+        with STATE.lock:
+            entries = list(STATE.file_map.values())
+        for e in entries:
+            op = e.get("old_path")
+            if op and os.path.normcase(os.path.normpath(op)) == target:
+                return True
+        return False
 
     def _send_file(self, path, content_type):
         try:
@@ -1699,8 +2014,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/logs":
                 json_resp(self, {"logs": STATE.get_logs()})
             elif path == "/api/logs/clear":
-                STATE.clear_logs()
-                json_resp(self, {"ok": True, "logs": []})
+                # 写操作只允许 POST（GET 可被 <img>/链接等跨站触发）
+                json_resp(self, {"error": "请使用 POST"}, 405)
             elif path == "/api/undo":
                 json_resp(self, {"has_undo": has_undo()})
             elif path == "/api/providers":
@@ -1719,6 +2034,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
+        if not self._check_request_origin():
+            json_resp(self, {"error": "跨站请求被拒绝"}, 403)
+            return
+        ctype = (self.headers.get("Content-Type") or "").lower()
+        if not ctype.startswith("application/json"):
+            # 浏览器对 application/json 会先发预检，跨站网页因此发不出能生效的 POST
+            json_resp(self, {"error": "请求需要 Content-Type: application/json"}, 415)
+            return
         data = read_json(self)
         # 除退出相关接口外，任意活跃请求视为程序仍在被使用，取消待退出
         if path not in ("/api/exit", "/api/exit/cancel"):
@@ -1735,17 +2058,20 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/folders/pick":
                 self._handle_pick_folder()
             elif path == "/api/folders/add":
-                folder = data.get("path", "").strip()
-                if folder and os.path.isdir(folder) and folder not in STATE.folders:
+                folder = normalize_folder(data.get("path", ""))
+                if folder and os.path.isdir(folder) and not any(_same_folder(f, folder) for f in STATE.folders):
                     STATE.folders.append(folder)
                     STATE.log(f"已添加文件夹: {folder}")
                     json_resp(self, {"folders": list(STATE.folders)})
+                elif folder and any(_same_folder(f, folder) for f in STATE.folders):
+                    json_resp(self, {"error": "该文件夹已在列表中", "folders": list(STATE.folders)}, 400)
                 else:
-                    json_resp(self, {"error": "无效的文件夹路径或已存在"}, 400)
+                    json_resp(self, {"error": "无效的文件夹路径"}, 400)
             elif path == "/api/folders/remove":
-                folder = data.get("path", "")
-                if folder in STATE.folders:
-                    STATE.folders.remove(folder)
+                folder = normalize_folder(data.get("path", ""))
+                hit = next((f for f in STATE.folders if _same_folder(f, folder)), None)
+                if hit is not None:
+                    STATE.folders.remove(hit)
                     json_resp(self, {"folders": list(STATE.folders)})
                 else:
                     json_resp(self, {"error": "文件夹不存在"}, 404)
@@ -1802,7 +2128,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(payload)
             elif path == "/api/open/file":
                 p = data.get("path", "")
-                if p and os.path.exists(p):
+                if p and os.path.exists(p) and not self._known_path(p):
+                    json_resp(self, {"error": "只能打开当前列表中的文件"}, 403)
+                elif p and os.path.exists(p):
                     try:
                         os.startfile(p)  # noqa
                         json_resp(self, {"ok": True})
@@ -1812,7 +2140,9 @@ class Handler(BaseHTTPRequestHandler):
                     json_resp(self, {"error": "文件不存在"}, 404)
             elif path == "/api/open/reveal":
                 p = data.get("path", "")
-                if p and os.path.exists(p):
+                if p and os.path.exists(p) and not self._known_path(p):
+                    json_resp(self, {"error": "只能定位当前列表中的文件"}, 403)
+                elif p and os.path.exists(p):
                     try:
                         subprocess.Popen(["explorer", "/select,", p])
                         json_resp(self, {"ok": True})
@@ -1824,6 +2154,9 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.clear_logs()
                 json_resp(self, {"ok": True, "logs": []})
             elif path == "/api/undo":
+                if STATE.renaming:
+                    json_resp(self, {"error": "正在重命名，请等待完成后再撤销"}, 409)
+                    return
                 json_resp(self, perform_undo())
             elif path == "/api/templates/save":
                 ok, msg = save_template(data.get("name", ""), data.get("data", {}))
@@ -1854,7 +2187,14 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/recognize/status":
                 json_resp(self, {"recognizing": STATE.recognizing, "stop_requested": STATE.recognize_stop})
             elif path == "/api/ai/config":
-                save_ai_config(data.get("config", {}))
+                incoming = data.get("config")
+                if not isinstance(incoming, dict) or not incoming:
+                    # 请求体畸形时若直接保存会把用户已存的 API Key/服务商整体清空
+                    json_resp(self, {"error": "配置内容为空或格式错误，未保存"}, 400)
+                    return
+                cfg = load_ai_config()
+                cfg.update(incoming)
+                save_ai_config(cfg)
                 STATE.log("AI 配置已保存", "success")
                 json_resp(self, {"ok": True, "config": load_ai_config()})
             elif path == "/api/ai/detect-ollama":
@@ -1869,7 +2209,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/ai/naming/status":
                 json_resp(self, {"running": STATE.ai_naming, "stop_requested": STATE.ai_naming_stop,
                                  "total": STATE.ai_naming_total, "done": STATE.ai_naming_done,
-                                 "results": STATE.ai_naming_result})
+                                 "results": STATE.ai_naming_result,
+                                 "error": STATE.ai_naming_error})
             elif path == "/api/ai/test":
                 self._handle_test_api(data)
             else:
@@ -1888,8 +2229,9 @@ class Handler(BaseHTTPRequestHandler):
             root.attributes("-topmost", True)
             folder = filedialog.askdirectory(title="选择目标文件夹")
             root.destroy()
+            folder = normalize_folder(folder)
             if folder and os.path.isdir(folder):
-                if folder not in STATE.folders:
+                if not any(_same_folder(f, folder) for f in STATE.folders):
                     STATE.folders.append(folder)
                     STATE.log(f"已添加文件夹: {folder}")
             json_resp(self, {"folders": list(STATE.folders)})
@@ -1901,7 +2243,15 @@ class Handler(BaseHTTPRequestHandler):
         if not folders:
             json_resp(self, {"error": "请先添加文件夹"}, 400)
             return
-        STATE.folders = [f for f in folders if os.path.isdir(f)]
+        cleaned = []
+        for f in folders:
+            nf = normalize_folder(f)
+            if nf and os.path.isdir(nf) and not any(_same_folder(x, nf) for x in cleaned):
+                cleaned.append(nf)
+        if not cleaned:
+            json_resp(self, {"error": "文件夹不存在或不可访问"}, 400)
+            return
+        STATE.folders = cleaned
         files = scan_files(STATE.folders, data.get("recursive", True),
                            data.get("only_folders", False), data.get("filter_system", True))
         STATE.log(f"已加载 {len(files)} 个文件/文件夹")
@@ -1924,9 +2274,17 @@ class Handler(BaseHTTPRequestHandler):
         if not ids:
             json_resp(self, {"error": "没有要重命名的文件"}, 400)
             return
+        with STATE.lock:
+            busy = STATE.renaming
+            if not busy:
+                STATE.renaming = True
+        if busy:
+            # 两个标签页/连点同时提交时，两批改名会互相踩：同一文件一成功一「找不到」，
+            # 且撤销日志只有最后一批
+            json_resp(self, {"error": "已有重命名任务正在进行，请等待完成后再操作"}, 409)
+            return
         STATE.log(f"开始重命名：{len(ids)} 个文件，前缀「{(scheme or {}).get('prefix','')}」", "info")
         STATE.rename_stop = False
-        STATE.renaming = True
         try:
             stats = perform_rename(ids, scheme)
         finally:
@@ -1986,26 +2344,36 @@ class Handler(BaseHTTPRequestHandler):
         if data.get("config"):
             cfg.update(data.get("config"))
 
-        # 独立线程执行命名：主线程立即返回，避免阻塞 HTTP 导致「停止」请求无法到达
+        # 先同步占位，避免前端第一次轮询时任务线程还没启动、被误判为「已完成（0 个）」
+        STATE.ai_naming = True
+        STATE.ai_naming_stop = False
+        STATE.ai_naming_total = len(ids)
+        STATE.ai_naming_done = 0
+        STATE.ai_naming_result = None
+        STATE.ai_naming_error = None
+
+        # 独立线程执行命名：主线程立即返回，避免阻塞 HTTP 导致「停止」请求无法到达。
+        # 结果一律通过 /api/ai/naming/status 轮询获取；这里不能再往已经结束的
+        # 响应 socket 写第二份 JSON（主线程已响应过，多写会污染 keep-alive 连接）。
         def worker():
             try:
                 results, err, stopped = run_ai_naming(ids, cfg)
                 if err:
-                    self._json_safe({"error": err}, 400)
+                    STATE.ai_naming_error = err
+                    STATE.log(f"AI 内容命名未执行：{err}", "error")
                     return
                 ok = sum(1 for v in results.values() if v and not str(v).startswith("__ERR__"))
                 errs = [str(v).split(":", 1)[1] if ":" in str(v) else str(v)
                         for v in results.values() if str(v).startswith("__ERR__")]
                 STATE.log(f"AI 内容命名完成：{ok} 个成功" + (f"，{len(errs)} 个失败" if errs else "") +
                           ("（已停止）" if stopped else ""))
-                self._json_safe({"results": results, "stopped": stopped,
-                                 "failed": len(errs), "error_detail": (errs[0] if errs else None)})
             except Exception as e:
                 traceback.print_exc()
-                self._json_safe({"error": str(e)}, 500)
+                STATE.ai_naming_error = f"AI 内容命名异常：{e}"
+                STATE.log(STATE.ai_naming_error, "error")
 
         threading.Thread(target=worker, daemon=True).start()
-        json_resp(self, {"started": True})
+        json_resp(self, {"started": True, "total": len(ids)})
 
     def _handle_test_api(self, data):
         """测试云端 API 连接（支持前端实时表单配置覆盖）。
@@ -2054,11 +2422,38 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
 
+def _existing_instance(port):
+    """探测该端口上是否已经有本程序在运行（避免重复启动后两个实例抢端口）"""
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/health", method="GET")
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return isinstance(data, dict) and data.get("status") == "ok"
+    except Exception:
+        return False
+
+
 def main():
     port = 8890
     if len(sys.argv) > 1:
-        port = int(sys.argv[1])
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        try:
+            port = int(sys.argv[1])
+        except ValueError:
+            print(f"端口参数无效：{sys.argv[1]}，已回退到 8890")
+            port = 8890
+    # HTTPServer 默认 allow_reuse_address=True，同一端口可以被两个实例同时绑定，
+    # 请求会随机落到其中一个实例上（表现为「预览/重命名时有时无」「列表突然空了」）
+    if _existing_instance(port):
+        print(f"检测到程序已在 http://localhost:{port} 运行，直接打开浏览器即可（不再重复启动）")
+        _auto_open_browser(port, delay=0.2)
+        time.sleep(1.5)
+        return
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    except OSError as e:
+        print(f"端口 {port} 无法启动：{e}")
+        print(f"请换一个端口重试，例如：python server.py {port + 1}")
+        return
     global _current_server
     _current_server = server
     STATE.log(f"Web 服务已启动，端口 {port}，数据目录 {DATA_DIR}", "success")

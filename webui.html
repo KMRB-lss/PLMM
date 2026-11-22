@@ -603,6 +603,13 @@ td .diff{color:var(--warn)}
               </div>
             </div>
             <div class="rule-item" style="margin-top:12px">
+              <label class="field-label">修改扩展名 <span style="color:var(--text-3)">（留空=保持原扩展名，如 md / .md / .tar.gz）</span></label>
+              <div class="row" style="align-items:center;gap:8px">
+                <input class="input" id="inNewExt" style="width:150px" placeholder="留空=保持原扩展名" oninput="onExtInput()">
+                <span id="extHint" style="font-size:12px;color:var(--text-3)"></span>
+              </div>
+            </div>
+            <div class="rule-item" style="margin-top:12px">
               <label class="field-label">元数据占位符 <span style="color:var(--text-3)">（点击插入到前缀）</span></label>
               <div class="meta-chips">
                 <span class="chip" data-meta="创建日期" onclick="insertMetaChip('{创建日期}')">📅 创建日期</span>
@@ -630,7 +637,7 @@ td .diff{color:var(--warn)}
               <div>
                 <div class="row" style="margin-bottom:10px">
                   <span class="field-label" style="margin:0">添加内容：</span>
-                  <input class="input" style="flex:1" id="addText" placeholder="在文件名前/后插入文字" oninput="livePreview()">
+                  <input class="input" style="flex:1" id="addText" placeholder="在文件名前/后插入文字（不自动加下划线，需要分隔符请自己写，如 2024_）" oninput="livePreview()">
                   <label class="check"><input type="radio" name="addPos" value="前" checked> 前面</label>
                   <label class="check"><input type="radio" name="addPos" value="后"> 后面</label>
                 </div>
@@ -675,13 +682,13 @@ td .diff{color:var(--warn)}
             </div>
             <div class="row" style="margin-bottom:10px">
               <span class="field-label" style="margin:0;width:64px">查找内容：</span>
-              <input class="input" style="flex:1" id="regexFind" placeholder="如 \d+（留空表示不启用正则替换）" oninput="regexLive()">
+              <input class="input" style="flex:1" id="regexFind" placeholder="如 \d+（留空表示不启用正则替换）" oninput="regexLive();livePreview()">
             </div>
             <div class="row">
               <span class="field-label" style="margin:0;width:64px">替换为：</span>
-              <input class="input" style="flex:1" id="regexReplace" placeholder="留空即删除" oninput="regexLive()">
-              <label class="check"><input type="checkbox" id="regexCase" checked> 区分大小写</label>
-              <label class="check"><input type="checkbox" id="regexLower"> 全部小写</label>
+              <input class="input" style="flex:1" id="regexReplace" placeholder="留空即删除" oninput="regexLive();livePreview()">
+              <label class="check"><input type="checkbox" id="regexCase" checked onchange="livePreview()"> 区分大小写</label>
+              <label class="check"><input type="checkbox" id="regexLower" onchange="livePreview()"> 全部小写</label>
             </div>
             <div class="regex-live">
               <span>实时预览</span>
@@ -802,7 +809,7 @@ td .diff{color:var(--warn)}
                 <label class="check"><input type="checkbox" id="filterByCategory" onchange="onFilterSettingChange()"> 按分类筛选结果</label>
                 <span id="filterModeRow" style="display:none;align-items:center;gap:6px">
                   <span class="field-label" style="margin:0">显示模式</span>
-                  <select class="select" id="filterShowMode" style="width:170px">
+                  <select class="select" id="filterShowMode" style="width:170px" onchange="renderTable()">
                     <option value="only">只显示筛选结果</option>
                     <option value="highlight">显示全部 + 高亮筛选</option>
                   </select>
@@ -815,10 +822,7 @@ td .diff{color:var(--warn)}
               <div class="row" style="gap:14px;flex-wrap:wrap">
                 <label class="check"><input type="checkbox" id="autoExport" onchange="onExportSettingChange()"> 识别后自动导出结果</label>
                 <span id="exportFmtRow" style="display:none;align-items:center;gap:6px">
-                  <span class="field-label" style="margin:0">导出格式</span>
-                  <select class="select" id="exportFmt" style="width:80px">
-                    <option value="json">json</option><option value="csv">csv</option><option value="txt">txt</option>
-                  </select>
+                  <span class="field-label" style="margin:0">导出格式以「导出识别结果」旁的格式为准</span>
                 </span>
               </div>
             </div>
@@ -1178,6 +1182,7 @@ td .diff{color:var(--warn)}
           <li><b>分类 + 编号</b>：勾选「按分类命名」后，按图片识别结果分类编号：`人物_01`、`风景_02`</li>
           <li><b>编号位数可自定义</b>：输入 1-20 的任意数字，`1` 表示不补零（`旅行_1`、`旅行_2`…）</li>
           <li><b>功能开关</b>：「命名规则设置」「添加&替换」各有「启用」勾选框，编号功能有独立开关，默认全部勾选；取消勾选后预览与重命名只应用勾选的功能</li>
+          <li><b>修改扩展名</b>：在「修改扩展名」里填 `md` / `.md` / `.tar.gz` 等可统一改扩展名（留空则保持原扩展名；无扩展名的文件也能加上）；Excel 导入映射里的新文件名同样可以带不同扩展名</li>
           <li><b>元数据占位符</b>：前缀可插入 `{创建日期}` `{修改日期}` `{文件大小}` `{扩展名}` `{ID:3}` 等占位符</li>
         </ul>
       </div>
@@ -1306,7 +1311,37 @@ let files=[];        // {id,old,ext,relpath,size,mtime,cat,checked,new,status,ta
 let folders=[];      // 文件夹路径（字符串）
 let selFolderIdx=0;
 let renaming=false;
+// 「手工指定新文件名」的 id 集合：来自 Excel 导入映射、图片识别结果直通。
+// 这些名字是用户/模型定稿的，点「开始重命名」时必须原样执行，
+// 不能被命名规则重新计算覆盖（此前这两个功能只改显示、不生效）。
+let manualNewIds=new Set();
 
+// 扩展名规范化：与后端 server.py 的 normalize_ext 保持一致
+// 允许 md / .md / *.md / .tar.gz；纯数字（如 v1.2 的 .2）不算扩展名
+function normExt(v){
+  let e=String(v==null?"":v).trim().replace(/^["']+|["']+$/g,"").replace(/^\*+/,"").trim();
+  if(!e) return "";
+  e=e.replace(/^[.\s]+/,"").replace(/[^A-Za-z0-9.]/g,"");
+  const parts=e.split(".").filter(Boolean);
+  if(!parts.length||parts.length>3) return "";
+  if(parts.every(p=>/^\d+$/.test(p))) return "";
+  if(parts.some(p=>p.length>10)) return "";
+  return "."+parts.join(".");
+}
+function onExtInput(){
+  const el=$("inNewExt"), hint=$("extHint");
+  if(!el) return;
+  const raw=el.value.trim();
+  const ext=raw?normExt(raw):"";
+  if(raw&&!ext){
+    el.style.borderColor="var(--err)";
+    if(hint){ hint.textContent="扩展名无效，示例：md / .md / .tar.gz"; hint.style.color="var(--err)"; }
+  }else{
+    el.style.borderColor="";
+    if(hint){ hint.textContent=ext?("将统一改为 "+ext):""; hint.style.color="var(--text-3)"; }
+  }
+  livePreview();
+}
 function getScheme(){
   const m={pn:"prefix_num",np:"num_prefix",pns:"prefix_num_suffix"}[$("inMode").value]||"prefix_num";
   const prefix=$("inPrefix").value, suffix=$("inSuffix").value;
@@ -1329,6 +1364,8 @@ function getScheme(){
     regex_case_sensitive:$("regexCase").checked, regex_lowercase:$("regexLower").checked,
     use_category:$("useCategory").checked,
     group_by_ext:$("groupByExt").checked,
+    // 修改扩展名（留空=保持原扩展名）；填了非法值时不发送，避免误改
+    new_ext:$("inNewExt")?((($("inNewExt").value.trim())&&normExt($("inNewExt").value))||""):"",
   };
   if(s.use_category){
     const cats={};
@@ -1395,12 +1432,14 @@ async function removeFolder(){
 }
 async function clearFolders(){
   await api("/folders/clear","POST",{});
-  folders=[]; files=[]; selFolderIdx=0;
-  renderFolders(); renderTable();
+  folders=[]; files=[]; selFolderIdx=0; manualNewIds.clear();
+  renderFolders(); renderTable(); updateStatGrid();
   toast("已清空文件夹列表");
 }
+let _lastLoadAll=false;
 async function loadFiles(all){
   if(!folders.length){ toast("请先添加文件夹"); return; }
+  _lastLoadAll=!!all;
   let target;
   if(all){
     target=[...folders];
@@ -1414,6 +1453,7 @@ async function loadFiles(all){
       folders:target, recursive:$("optRecursive").checked,
       only_folders:$("optOnlyFolder").checked, filter_system:true,
     });
+    manualNewIds.clear();
     files=(d.files||[]).map(f=>({...f,checked:true,new:"",status:"待处理",tag:"pending"}));
     refreshCatFilter();
     renderTable(); updateStatGrid();
@@ -1433,9 +1473,9 @@ function buildName(idx){
   const prefix=$("inPrefix").value;
   const suffix=$("inSuffix").value;
   const mode=$("inMode").value;
-  // 编号功能关闭：仅应用前缀/后缀
+  // 编号功能关闭：仅应用前缀/后缀（与后端 build_new_name 一致：三种模式都拼后缀）
   if($("numOn")&&!$("numOn").checked){
-    return (mode==="pns"&&suffix)?`${prefix}_${suffix}`:(prefix||"文件");
+    return suffix?`${prefix}_${suffix}`:(prefix||"文件");
   }
   const start=parseInt($("inStart").value||"1",10);
   const pad=Math.min(20,Math.max(1,parseInt($("inPad").value||"2",10)||2));  // 1-20 位，可自定义
@@ -1447,6 +1487,7 @@ function buildName(idx){
   return base;
 }
 let liveTimer=null;
+let _previewSeq=0;   // 预览请求序号：慢的旧响应后到时不覆盖新结果
 function livePreview(){
   clearTimeout(liveTimer);
   liveTimer=setTimeout(()=>{
@@ -1463,14 +1504,22 @@ function livePreview(){
     }
     if(files.length){
       // 实时预览所有勾选文件（而非仅前 3 个），保证「新文件名」列与实际一致
+      manualNewIds.clear();   // 规则预览会覆盖手工指定的名字
       const ids=files.filter(f=>f.checked).map(f=>f.id);
       if(!ids.length) return;
+      const seq=++_previewSeq;
       api("/preview","POST",{ids,scheme:getScheme()}).then(d=>{
+        if(seq!==_previewSeq) return;   // 过期响应，丢弃
         const r=d.results||{};
         files.forEach(f=>{
           if(f.checked&&r[f.id]!==undefined){
             f.new=r[f.id].new||"";
             f.status=r[f.id].status||"待处理";
+          }else if(!f.checked){
+            // 取消勾选的行不再参与本批编号，避免表格继续显示旧的新文件名造成「预览≠执行」
+            f.new="";
+            f.status="待处理";
+            f.tag="pending";
           }
         });
         renderTable();
@@ -1501,10 +1550,11 @@ function getVisibleFiles(){
     }
     if(extF!=="全部"&&(f.ext||"").toLowerCase()!==extF.toLowerCase()) return false;
     if(catF!=="全部"&&(f.cat||"其他")!==catF) return false;
-    // 识别页「按分类筛选结果」
+    // 识别页「按分类筛选结果」：only=只显示匹配项；highlight=全部显示、匹配项高亮
     if(window._filterByCat){
       const curCat=$("catFilter")?$("catFilter").value:"全部";
-      if(curCat!=="全部"&&(f.cat||"其他")!==curCat) return false;
+      const showMode=$("filterShowMode")?$("filterShowMode").value:"only";
+      if(showMode!=="highlight"&&curCat!=="全部"&&(f.cat||"其他")!==curCat) return false;
     }
     return true;
   });
@@ -1538,20 +1588,24 @@ function renderTable(){
   if(window._filterByCat&&$("filterShowMode")&&$("filterShowMode").value==="only"){
     // getVisibleFiles 已过滤，直接渲染
   }
+  // 高亮模式：不隐藏任何行，只给匹配分类的行加底色
+  const hiCat=(window._filterByCat&&$("filterShowMode")&&$("filterShowMode").value==="highlight"&&$("catFilter"))
+    ?$("catFilter").value:"全部";
   const rows=list.map(f=>{
     const oldT=`title="${esc(f.old)}"`;
+    const hl=(hiCat&&hiCat!=="全部"&&(f.cat||"其他")===hiCat)?' style="background:rgba(20,184,166,.12)"':"";
     const nameCell=f.new
       ? `<span class="old" ${oldT}>${esc(f.old)}</span> → <span class="new" title="${esc(f.new)}">${esc(f.new)}</span>`
       : `<span class="old" ${oldT}>${esc(f.old)}</span>`;
     const [cls,txt]=statusMap(f.status);
     const idx=files.indexOf(f);
     const pathShort=f.folder||"";
-    return `<tr class="row-${f.tag}" data-idx="${idx}" oncontextmenu="showCtxMenu(event,${idx})">
+    return `<tr class="row-${f.tag}"${hl} data-idx="${idx}" oncontextmenu="showCtxMenu(event,${idx})">
       <td><label class="check"><input type="checkbox" data-idx="${idx}" ${f.checked?"checked":""} onchange="toggleOne(${idx},this.checked)"></label></td>
       <td>${nameCell}</td>
       <td class="path-cell" title="${esc(pathShort)}">${esc(pathShort)}</td>
       <td><span class="cat-tag" title="${esc(f.cat||"其他")}">${esc(f.cat||"其他")}</span></td>
-      <td data-col="status" title="${esc(txt)}"><span class="status-pill ${cls}">${txt}</span></td>
+      <td data-col="status" title="${esc(txt)}"><span class="status-pill ${cls}">${esc(txt)}</span></td>
     </tr>`;
   }).join("");
   body.innerHTML=rows||'<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:26px">请先添加文件夹并加载文件列表</td></tr>';
@@ -1586,9 +1640,12 @@ function updateCounts(visibleCount){
   const checked=files.filter(f=>f.checked).length;
   line.innerHTML=`共 <b id="cntTotal">${files.length}</b> · 勾选 <b id="cntChecked">${checked}</b> · 显示 <b>${visibleCount!==undefined?visibleCount:files.length}</b>`;
 }
-function toggleOne(i,v){ if(files[i]){ files[i].checked=v; updateCounts(); } }
-function selectAll(v){ files.forEach(f=>f.checked=v); renderTable(); }
-function invertSelect(){ files.forEach(f=>f.checked=!f.checked); renderTable(); }
+function toggleOne(i,v){ if(files[i]){ files[i].checked=v; updateCounts(); livePreview(); } }
+// 全选/反选只作用于「当前筛选后可见」的行：筛选出 .jpg 后点全选却把隐藏的 png 也改名，
+// 是用户最容易踩的「改了不是预览那批」的坑
+function _visibleFiles(){ try{ return getVisibleFiles(); }catch(e){ return files; } }
+function selectAll(v){ _visibleFiles().forEach(f=>f.checked=v); renderTable(); livePreview(); }
+function invertSelect(){ _visibleFiles().forEach(f=>f.checked=!f.checked); renderTable(); livePreview(); }
 function filterTable(v){ window._filter=v; renderTable(); }
 function toggleSortDir(){
   const key=$("sortBy").value||"name";
@@ -1604,6 +1661,7 @@ function toggleFoldersCheck(){
   const allChecked=files.filter(f=>f._is_folder).every(f=>f.checked);
   files.forEach(f=>{ if(f._is_folder) f.checked=!allChecked; });
   renderTable();
+  livePreview();
   toast(allChecked?"已取消勾选所有文件夹":"已勾选所有文件夹");
 }
 
@@ -1625,8 +1683,7 @@ function showCtxMenu(e,idx){
      <div class="cm-item" onclick="ctxAction('copyNew')">📋 复制新文件名</div>
      <div class="cm-item" onclick="ctxAction('copyPath')">📎 复制文件路径</div>
      <div class="cm-sep"></div>`}
-     <div class="cm-item" onclick="ctxAction('expand')">🌳 展开未递归文件夹</div>
-     <div class="cm-item" onclick="ctxAction('collapse')">🌲 收起未递归文件夹</div>`;
+     <div class="cm-item" onclick="ctxAction('reload')">🔄 重新加载列表</div>`;
   menu.classList.add("show");
   // 定位菜单，防溢出
   const mw=menu.offsetWidth, mh=menu.offsetHeight;
@@ -1644,9 +1701,9 @@ function ctxAction(action){
       body:JSON.stringify({path:name})}).then(r=>r.json()).then(d=>{ if(d&&d.error) toast(d.error); }).catch(()=>toast("无法打开文件"));
   };
   switch(action){
-    case "check": f.checked=true; renderTable(); break;
-    case "uncheck": f.checked=false; renderTable(); break;
-    case "invert": files.forEach(x=>x.checked=!x.checked); renderTable(); break;
+    case "check": f.checked=true; renderTable(); livePreview(); break;
+    case "uncheck": f.checked=false; renderTable(); livePreview(); break;
+    case "invert": files.forEach(x=>x.checked=!x.checked); renderTable(); livePreview(); break;
     case "open":
       winOpen(f.folder?f.folder.replace(/\\$/,"")+"\\"+f.old:f.old); break;
     case "reveal":
@@ -1656,8 +1713,7 @@ function ctxAction(action){
       break;
     case "copyNew": copyText(f.new||f.old); break;
     case "copyPath": copyText(f.folder?f.folder+"\\"+f.old:f.old); break;
-    case "expand": toast("文件夹已递归展开（重新加载生效）"); loadFiles(); break;
-    case "collapse": toast("文件夹已收起（重新加载生效）"); loadFiles(); break;
+    case "reload": loadFiles(_lastLoadAll); break;
   }
 }
 function copyText(t){
@@ -1677,12 +1733,15 @@ document.addEventListener("keydown",e=>{ if(e.key==="Escape") hideCtxMenu(); });
 
 /* ================= 列头排序 ================= */
 function sortByColumn(col){
-  if(col==="old"){ _sortDir.name*=-1; if($("sortBy")) $("sortBy").value="name"; renderTable(); }
+  if(col==="old"){ _sortDir.name*=-1; if($("sortBy")) $("sortBy").value="name"; }
   else if(col==="cat"){
     if(!_sortDir.cat) _sortDir.cat=-1; else _sortDir.cat*=-1;
     if($("sortBy")) $("sortBy").value="cat";
-    renderTable();
-  }
+  }else return;
+  const key=$("sortBy")?$("sortBy").value:"name";
+  const b=$("sortDirBtn");
+  if(b) b.textContent=(_sortDir[key]>0?"▲":"▼");
+  renderTable();
 }
 
 /* ================= 预览 & 重命名 ================= */
@@ -1703,6 +1762,7 @@ async function generatePreview(){
   }
   const ids=files.filter(f=>f.checked).map(f=>f.id);
   if(!ids.length){ toast("请先勾选文件"); return; }
+  manualNewIds.clear();   // 规则预览会覆盖手工指定的名字
   setBar("正在生成预览…",8);
   try{
     const d=await api("/preview","POST",{ids,scheme:getScheme()});
@@ -1732,14 +1792,35 @@ async function startRename(){
     if(currentTab()==="ai"){
       const names={};
       files.forEach(f=>{ if(f.checked&&f.new) names[f.id]=f.new; });
-      const pending=ids.filter(id=>!names[id]);
-      if(pending.length){
+      const namedIds=ids.filter(id=>names[id]);
+      if(!namedIds.length){
         renaming=false;
         if($("stopRenameBtn")) $("stopRenameBtn").disabled=true;
-        toast(`有 ${pending.length} 个勾选文件还没有 AI 生成的名字，请先点「🤖 开始生成 AI 文件名」`);
+        setBar("重命名未开始",0);
+        toast("勾选的文件还没有 AI 生成的名字，请先点「🤖 开始生成 AI 文件名」");
         return;
       }
-      payload={ids,scheme:{fixed_names:names}};
+      if(namedIds.length<ids.length){
+        toast(`按 AI 名字重命名 ${namedIds.length} 个；另有 ${ids.length-namedIds.length} 个尚未生成名字，先跳过`);
+      }
+      payload={ids:namedIds,scheme:{fixed_names:names}};
+    }else if(ids.some(id=>manualNewIds.has(id))){
+      // Excel 导入映射 / 识别结果直通：这些新文件名是定稿的，必须原样执行。
+      // 没有新名字的文件（Excel 未匹配到）保持不动，不能因此整批拒绝。
+      const names={};
+      ids.forEach(id=>{ const f=files.find(x=>x.id===id); if(f&&f.new) names[id]=f.new; });
+      const namedIds=ids.filter(id=>names[id]);
+      if(!namedIds.length){
+        renaming=false;
+        if($("stopRenameBtn")) $("stopRenameBtn").disabled=true;
+        setBar("重命名未开始",0);
+        toast("勾选的文件都还没有新文件名，请先导入 Excel 映射或生成预览");
+        return;
+      }
+      if(namedIds.length<ids.length){
+        toast(`按指定的新文件名重命名 ${namedIds.length} 个；另有 ${ids.length-namedIds.length} 个没有新名字，保持不动`);
+      }
+      payload={ids:namedIds,scheme:{fixed_names:names}};
     }
     const s=await api("/rename","POST",payload);
     // 用后端逐文件结果精确更新状态，不再重载（避免状态丢失）
@@ -1763,6 +1844,7 @@ async function startRename(){
         }
       }
     });
+    manualNewIds.clear();
     renderTable();
     const stopped=s.stopped?" · 已停止":"";
     setBar(`处理完成！成功 ${s.success} · 失败 ${s.failed} · 跳过 ${s.skipped}${stopped}`,100);
@@ -1787,6 +1869,7 @@ async function refreshPreview(){
   }
   const ids=files.filter(f=>f.checked).map(f=>f.id);
   if(!ids.length){ toast("请先勾选文件"); return; }
+  manualNewIds.clear();
   try{
     const d=await api("/preview","POST",{ids,scheme:getScheme()});
     const r=d.results||{};
@@ -1802,12 +1885,14 @@ async function refreshPreview(){
   }catch(e){ setBar("刷新失败",0); toast("刷新失败："+e.message); }
 }
 async function undoRename(){
+  if(renaming){ toast("正在重命名，请等待完成后再撤销"); return; }
   try{
     const d=await api("/undo","POST",{});
-    toast(`撤销完成：成功 ${d.success} · 失败 ${d.failed} · 跳过 ${d.skipped}`);
+    const firstErr=(d.details||[]).find(x=>String(x.status).startsWith("失败"));
+    toast(`撤销完成：成功 ${d.success} · 失败 ${d.failed} · 跳过 ${d.skipped}`+(firstErr?`（${firstErr.file}：${firstErr.status}）`:""));
     setBar(`撤销完成（成功 ${d.success}）`,100);
-    // 撤销后重新加载真实磁盘状态
-    await loadFiles();
+    // 撤销后重新加载真实磁盘状态（保持「全部文件夹」的加载范围）
+    await loadFiles(_lastLoadAll);
   }catch(e){ toast("撤销失败："+e.message); }
 }
 
@@ -1858,7 +1943,7 @@ function collectAiConfig(){
     api_model:$("apiModel").value,
     api_endpoint:$("apiEndpoint").value,
     ollama_base:$("ollamaBase").value,
-    ollama_model:$("ollamaModel").value,
+    ollama_model:$("ollamaModel").value||aiCfg.ollama_model||"",
     classify_mode:$("classifyMode").value,
     custom_categories:$("customCategories").value,
     free_style:$("freeStyle").value,
@@ -1868,7 +1953,7 @@ function collectAiConfig(){
     ai_content_prompt:$("aiContentPrompt").value,
     ai_content_limit:$("aiContentLimit").value,
     ai_batch_opt:$("aiBatchOpt").value,
-    local_model:$("localModel").value,
+    local_model:$("localModel").value||aiCfg.local_model||"",
     local_api_base:$("localApiBase").value,
     local_temperature:parseFloat($("localTemp").value||"0.7"),
     local_max_tokens:parseInt($("localMaxTokens").value||"512",10),
@@ -1903,7 +1988,7 @@ function applyAiConfigToUI(){
     $("apiModel").value=aiCfg.api_model||"";
     $("apiEndpoint").value=aiCfg.api_endpoint||"";
     $("ollamaBase").value=aiCfg.ollama_base||"http://localhost:11434";
-    $("ollamaModel").value=aiCfg.ollama_model||"";
+    setSelectValue($("ollamaModel"), aiCfg.ollama_model||"");
     $("classifyMode").value=aiCfg.classify_mode||"固定分类";
     $("customCategories").value=aiCfg.custom_categories||"";
     $("freeStyle").value=aiCfg.free_style||"图片描述";
@@ -1918,7 +2003,7 @@ function applyAiConfigToUI(){
     $("aiContentLimit").value=aiCfg.ai_content_limit||"auto";
     $("aiBatchOpt").value=aiCfg.ai_batch_opt||"batch";
     $("localApiBase").value=aiCfg.local_api_base||"http://localhost:11434";
-    $("localModel").value=aiCfg.local_model||"";
+    setSelectValue($("localModel"), aiCfg.local_model||"");
     $("localTemp").value=aiCfg.local_temperature||0.7;
     if($("localMaxTokens")) $("localMaxTokens").value=aiCfg.local_max_tokens||512;
     // 本地 Ollama 模式但未选模型：自动检测一次并选中，避免「生成为空」
@@ -1941,6 +2026,17 @@ function applyAiConfigToUI(){
     setAiContentMode(aiCfg.ai_content_mode||"云端API");
     onClassifyMode();
   }
+}
+// select 里没有对应 option 时直接赋值会被浏览器置空（保存的模型名就看丢了）
+function setSelectValue(sel, val){
+  if(!sel) return;
+  val=val==null?"":String(val);
+  if(val&&![...sel.options].some(o=>o.value===val)){
+    const opt=document.createElement("option");
+    opt.value=val; opt.textContent=val;
+    sel.appendChild(opt);
+  }
+  sel.value=val;
 }
 function fillProviderSelect(sel){
   const names=Object.keys(window._providers||{});
@@ -2095,6 +2191,7 @@ function setRecognizingUI(on){
   if(btn) btn.disabled=!on;
 }
 async function runRecognition(){
+  if(window._recognizing){ toast("识别正在进行中，请等待完成或先点「停止识别」"); return; }
   const ids=files.filter(f=>f.checked&&!f._is_folder).map(f=>f.id);
   if(!ids.length){ toast("请先加载并勾选要识别的文件"); return; }
   const bar=$("recBar");
@@ -2118,6 +2215,7 @@ async function runRecognition(){
     cfg.max_tag_count=parseInt($("maxTagCount").value||"3",10);
   }
   setRecMode(mode);
+  window._recognizing=true;
   setRecognizingUI(true);
   $("recModeLabel").textContent="模式："+mode+" · 识别中…";
   let p=0; const t=setInterval(()=>{ p=Math.min(p+3,88); bar.style.width=p+"%"; },40);
@@ -2128,9 +2226,15 @@ async function runRecognition(){
       if(r[f.id]){
         f.cat=r[f.id].category;
         f.tags=r[f.id].tags||[];
-        // 多标签：合并为文件名标签后缀（用分隔符连接）
-        if((r[f.id].tags||[]).length>1&&cfg.use_multiple_tags){
-          f.tagsText=r[f.id].tags.slice(0,cfg.max_tag_count).join(cfg.tag_separator);
+        // 标签文本：多标签按分隔符连接；只有一个标签时用它本身；都没有时留空
+        //（「用识别结果作文件名」优先用 tagsText，本次识别后必须同步更新，避免用到上一次的旧值）
+        const tags=(r[f.id].tags||[]);
+        if(tags.length>1&&cfg.use_multiple_tags){
+          f.tagsText=tags.slice(0,cfg.max_tag_count).join(cfg.tag_separator);
+        }else if(tags.length===1){
+          f.tagsText=tags[0];
+        }else{
+          f.tagsText="";
         }
       }
     });
@@ -2161,6 +2265,8 @@ async function runRecognition(){
     setRecognizingUI(false);
     $("recModeLabel").textContent="识别失败";
     toast("识别失败："+e.message);
+  }finally{
+    window._recognizing=false;
   }
 }
 async function exportRecognition(){
@@ -2195,6 +2301,8 @@ function onFilterSettingChange(){
 function onExportSettingChange(){
   const on=$("autoExport").checked;
   $("exportFmtRow").style.display=on?"flex":"none";
+  // 自动导出复用按钮旁的格式选择，保证「看到的格式」就是「实际导出的格式」
+  if(on&&$("exportFmt")&&$("recExportFmt")) $("recExportFmt").value=$("exportFmt").value||"json";
 }
 async function stopRecognition(){
   try{
@@ -2208,7 +2316,7 @@ async function stopRecognition(){
 }
 async function clearRecognition(){
   // 清除所有文件的识别分类结果，恢复扩展名规则分类
-  files.forEach(f=>{ f.tags=[]; f.cat=guessCatByExt(f.ext); });
+  files.forEach(f=>{ f.tags=[]; f.tagsText=""; f.interp=""; f.cat=guessCatByExt(f.ext); });
   refreshCatFilter(); renderTable(); updateStatGrid();
   toast("已清除识别结果，恢复扩展名分类");
 }
@@ -2241,10 +2349,11 @@ function applyRecognitionAsFilename(){
     f.new=base+(f.ext||"");
     f.status="待处理";
     f.tag="pending";
+    manualNewIds.add(f.id);
     ok++;
   });
   renderTable(); updateStatGrid();
-  toast(`已将 ${ok} 个文件的识别结果填入新文件名`+(skip?`（${skip} 个无识别结果跳过）`:""));
+  toast(`已将 ${ok} 个文件的识别结果填入新文件名`+(skip?`（${skip} 个无识别结果跳过）`:"")+"，点「► 开始重命名」即按此执行");
 }
 function updateStatGrid(){
   // 动态统计所有出现过的分类，保证与实际数据一致
@@ -2271,6 +2380,7 @@ async function startAiNaming(){
   // 文件与文件夹均可生成名字：文件按内容、文件夹按其内文件清单
   const ids=files.filter(f=>f.checked).map(f=>f.id);
   if(!ids.length){ toast("请先加载并勾选文件或文件夹"); return; }
+  if(window._aiNamingRunning){ toast("AI 命名正在进行中，请等待完成或先点「停止生成」"); return; }
   const cfg=collectAiConfig();
   if(cfg.ai_content_mode==="云端API"&&!(cfg.ai_naming_key||cfg.api_key)){ toast("云端模式需要先填写 API Key（本页上方）"); return; }
   if(cfg.ai_content_mode==="本地Ollama"&&!cfg.local_model){ toast("本地模式需要先选择模型（点击「检测本地模型」）"); return; }
@@ -2290,6 +2400,12 @@ async function startAiNaming(){
       const done=Math.min(st.done||0,total);
       const pct=total?Math.round(8+done/total*86):8;
       setBar(`AI 正在生成文件名…（${done}/${total}）${st.stop_requested?" · 正在停止…":""}`,pct);
+      if(st.error&&!st.running){
+        // 整体失败（如未配置 Key / 没有可处理的文件）：后端把原因放在 error 里
+        setBar("AI 命名失败",0);
+        toast("AI 命名失败："+st.error);
+        break;
+      }
       if(!st.running){
         // 任务结束：用最终结果填充列表（成功的新名 / 失败的标红）
         const r=st.results||{};
@@ -2302,7 +2418,11 @@ async function startAiNaming(){
             if(!errMsg) errMsg=String(v).slice(7);
             f.status="失败"; f.tag="err"; f.new="";
           }else if(v){
-            f.new=v; f.status="待处理"; f.tag="pending"; ok++;
+            f.new=v; f.status="待处理"; f.tag="pending";
+            // AI 名字同样记入手工名字集合：切到规则页后点「开始重命名」也按 AI 名字执行，
+            // 不会因为换了标签页而被规则重新计算覆盖
+            manualNewIds.add(f.id);
+            ok++;
           }
         });
         renderTable();
@@ -2318,6 +2438,7 @@ async function startAiNaming(){
   }
   window._aiNamingRunning=false;
   if($("stopAiBtn")) $("stopAiBtn").disabled=true;
+  renderTable();
 }
 async function stopAiNaming(){
   try{
@@ -2335,7 +2456,12 @@ function insertMetaChip(ph){
   el.focus();
   el.setSelectionRange(start+ph.length,start+ph.length);
   livePreview();
-  toast("已插入占位符："+ph);
+  // 作者/所有者依赖 pywin32（可选依赖），没装时取不到值，明确提示而不是静默变空
+  if(ph==="{作者}"||ph==="{所有者}"){
+    toast("已插入 "+ph+"（该元数据需要安装 pywin32 才能获取，取不到时会替换为空）");
+  }else{
+    toast("已插入占位符："+ph);
+  }
 }
 async function importExcelFile(input){
   const file=input.files&&input.files[0];
@@ -2358,11 +2484,11 @@ async function importExcelFile(input){
     let applied=0,notFound=0;
     mappings.forEach(m=>{
       const f=files.find(x=>x.old===m.old);
-      if(f){ f.new=m.new; f.status="待处理"; applied++; }
+      if(f){ f.new=m.new; f.status="待处理"; f.tag="pending"; manualNewIds.add(f.id); applied++; }
       else notFound++;
     });
     renderTable();
-    toast(`Excel 导入成功：应用 ${applied} 条${notFound?`，${notFound} 条未匹配`:""}`);
+    toast(`Excel 导入成功：应用 ${applied} 条${notFound?`，${notFound} 条未匹配`:""}（点「► 开始重命名」将按导入的名字执行）`);
   }catch(e){ toast("导入失败："+e.message); }
   input.value="";
 }
@@ -2393,7 +2519,8 @@ function applyTemplate(name){
     const t=(d.templates||[]).find(x=>x.name===name);
     if(!t||!t.data) return;
     const s=t.data;
-    $("inPrefix").value=s.prefix||"文件";
+    // 不能用 s.prefix||"文件"：前缀本来就是空字符串的模板会被改成「文件」
+    $("inPrefix").value=s.prefix!=null?s.prefix:"";
     $("inStart").value=s.start_num!=null?s.start_num:1;
     $("inPad").value=s.pad_width!=null?s.pad_width:2;
     $("inSuffix").value=s.suffix||"";
@@ -2412,6 +2539,12 @@ function applyTemplate(name){
     if($("addReplaceOn")) $("addReplaceOn").checked=s.add_replace_on!==false;
     if($("numOn")) $("numOn").checked=s.numbering_on!==false;
     if($("rulesOn")) $("rulesOn").checked=s.rules_on!==false;
+    // 分类编号 / 按扩展名编号 / 正则选项也要一起恢复，否则「加载模板」与保存时的规则不一致
+    if($("useCategory")) $("useCategory").checked=!!s.use_category;
+    if($("groupByExt")) $("groupByExt").checked=!!s.group_by_ext;
+    if($("regexCase")) $("regexCase").checked=s.regex_case_sensitive!==false;
+    if($("regexLower")) $("regexLower").checked=!!s.regex_lowercase;
+    if($("inNewExt")){ $("inNewExt").value=s.new_ext||""; onExtInput(); }
     toast("已加载模板："+name);
     livePreview();
   });
@@ -2619,10 +2752,18 @@ async function init(){
   loadAiConfig();
 }
 init();
+// 输入框/下拉里打字时不劫持快捷键（之前在前缀框里按 Ctrl+Z 会触发「撤销重命名」）
+function _inTextField(){
+  const el=document.activeElement;
+  if(!el) return false;
+  return ["INPUT","TEXTAREA","SELECT"].includes(el.tagName)||el.isContentEditable;
+}
 document.addEventListener("keydown",e=>{
-  if(e.ctrlKey&&e.key==="o"){ e.preventDefault(); pickFolder(); }
-  if(e.ctrlKey&&e.key==="r"){ e.preventDefault(); startRename(); }
-  if(e.ctrlKey&&e.key==="z"){ e.preventDefault(); undoRename(); }
+  if(!e.ctrlKey) return;
+  const key=(e.key||"").toLowerCase();
+  if(key==="o"){ if(_inTextField()) return; e.preventDefault(); pickFolder(); return; }
+  // Ctrl+R 是浏览器刷新，之前被劫持成「开始重命名」，误按即批量改盘上文件名，已移除
+  if(key==="z"){ if(_inTextField()) return; e.preventDefault(); undoRename(); }
 });
 </script>
 </body>
